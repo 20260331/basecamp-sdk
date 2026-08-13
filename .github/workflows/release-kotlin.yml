@@ -1,0 +1,177 @@
+name: Release Kotlin SDK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Manual trigger is always dry-run (rehearsal mode)
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smithy:
+    uses: ./.github/workflows/smithy-verify.yml
+    permissions:
+      contents: read
+
+  test:
+    name: Test Kotlin SDK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: kotlin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        # zizmor: ignore[cache-poisoning] -- cached deps are for testing, not release artifact generation
+        with:
+          cache-provider: basic
+
+      - name: Build
+        run: ./gradlew :basecamp-sdk:build
+
+      - name: Test
+        run: ./gradlew :basecamp-sdk:check
+
+      - name: Check generated code drift
+        run: |
+          ./gradlew :generator:run --args="--openapi ../openapi.json --behavior ../behavior-model.json --output sdk/src/commonMain/kotlin/com/basecamp/sdk/generated"
+          if [ -n "$(git status --porcelain -- sdk/src/commonMain/kotlin/com/basecamp/sdk/generated/)" ]; then
+            echo "::error::Generated Kotlin code is out of date. Run 'make kt-generate-services' and commit."
+            git status --short -- sdk/src/commonMain/kotlin/com/basecamp/sdk/generated/
+            git diff --stat -- sdk/src/commonMain/kotlin/com/basecamp/sdk/generated/ || true
+            exit 1
+          fi
+          echo "Generated code is up to date"
+
+  # Gradle's publish task builds from the project rather than from a prepared
+  # file, so the rehearsal cannot hand an artifact to the publisher the way the
+  # gem, wheel and npm tarball do. It gets its own job instead, so the dry run
+  # never holds `packages: write`.
+  publish-dry-run:
+    name: Publish to GitHub Packages (dry run)
+    needs: [smithy, test]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: kotlin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        # zizmor: ignore[cache-poisoning] -- cache is branch-isolated; fork PRs cannot write to this cache
+        with:
+          cache-provider: basic
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(grep '^version' sdk/build.gradle.kts | sed 's/version = "\(.*\)"/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read version from kotlin/sdk/build.gradle.kts"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Rehearsal for version: $VERSION"
+
+      - name: Dry-run build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./gradlew :basecamp-sdk:build
+          echo "::notice::Dry run mode - not actually publishing"
+          echo "Would publish: com.basecamp:basecamp-sdk:${VERSION} to GitHub Packages"
+
+  publish:
+    name: Publish to GitHub Packages
+    needs: [smithy, test]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: kotlin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag is on main
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        # zizmor: ignore[cache-poisoning] -- cache is branch-isolated; fork PRs cannot write to this cache
+        with:
+          cache-provider: basic
+
+      - name: Extract version
+        id: version
+        run: |
+          # Tag trigger: extract from tag (v0.2.1 → 0.2.1)
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          GRADLE_VERSION=$(grep '^version' sdk/build.gradle.kts | sed 's/version = "\(.*\)"/\1/')
+          if [ "$GRADLE_VERSION" != "$VERSION" ]; then
+            echo "::error::Gradle version ($GRADLE_VERSION) does not match tag version ($VERSION)"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Releasing version: $VERSION"
+
+      - name: Publish to GitHub Packages
+        shell: bash
+        run: |
+          set +e
+          output=$(./gradlew :basecamp-sdk:publish 2>&1)
+          status=$?
+          set -e
+          echo "$output"
+          if [ "$status" -eq 0 ]; then
+            echo "Publish succeeded."
+          elif echo "$output" | grep -q "status code 409"; then
+            echo "Version already published — treating as success for idempotency."
+          else
+            exit "$status"
+          fi
+        env:
+          GITHUB_USER: x-access-token
+          GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,225 @@
+package com.basecamp.sdk.generated
+
+import com.basecamp.sdk.AccountClient
+import com.basecamp.sdk.generated.services.*
+
+/**
+ * Generated service accessor extensions for [AccountClient].
+ *
+ * These properties provide lazy, cached access to all Basecamp API services.
+ *
+ * @generated from OpenAPI spec — do not edit directly
+ */
+
+/** Account operations. */
+val AccountClient.account: AccountService
+    get() = service("Account") { AccountService(this) }
+
+/** Attachments operations. */
+val AccountClient.attachments: AttachmentsService
+    get() = service("Attachments") { AttachmentsService(this) }
+
+/** Automation operations. */
+val AccountClient.automation: AutomationService
+    get() = service("Automation") { AutomationService(this) }
+
+/** Bookmarks operations. */
+val AccountClient.bookmarks: BookmarksService
+    get() = service("Bookmarks") { BookmarksService(this) }
+
+/** Boosts operations. */
+val AccountClient.boosts: BoostsService
+    get() = service("Boosts") { BoostsService(this) }
+
+/** Calendars operations. */
+val AccountClient.calendars: CalendarsService
+    get() = service("Calendars") { CalendarsService(this) }
+
+/** Campfires operations. */
+val AccountClient.campfires: CampfiresService
+    get() = service("Campfires") { CampfiresService(this) }
+
+/** CardColumns operations. */
+val AccountClient.cardColumns: CardColumnsService
+    get() = service("CardColumns") { CardColumnsService(this) }
+
+/** CardSteps operations. */
+val AccountClient.cardSteps: CardStepsService
+    get() = service("CardSteps") { CardStepsService(this) }
+
+/** CardTables operations. */
+val AccountClient.cardTables: CardTablesService
+    get() = service("CardTables") { CardTablesService(this) }
+
+/** Cards operations. */
+val AccountClient.cards: com.basecamp.sdk.services.CardsService
+    get() = service("Cards") { com.basecamp.sdk.services.CardsService(this) }
+
+/** Checkins operations. */
+val AccountClient.checkins: CheckinsService
+    get() = service("Checkins") { CheckinsService(this) }
+
+/** ClientApprovals operations. */
+val AccountClient.clientApprovals: ClientApprovalsService
+    get() = service("ClientApprovals") { ClientApprovalsService(this) }
+
+/** ClientCorrespondences operations. */
+val AccountClient.clientCorrespondences: ClientCorrespondencesService
+    get() = service("ClientCorrespondences") { ClientCorrespondencesService(this) }
+
+/** ClientReplies operations. */
+val AccountClient.clientReplies: ClientRepliesService
+    get() = service("ClientReplies") { ClientRepliesService(this) }
+
+/** ClientVisibility operations. */
+val AccountClient.clientVisibility: ClientVisibilityService
+    get() = service("ClientVisibility") { ClientVisibilityService(this) }
+
+/** CloudFiles operations. */
+val AccountClient.cloudFiles: CloudFilesService
+    get() = service("CloudFiles") { CloudFilesService(this) }
+
+/** Comments operations. */
+val AccountClient.comments: CommentsService
+    get() = service("Comments") { CommentsService(this) }
+
+/** Documents operations. */
+val AccountClient.documents: com.basecamp.sdk.services.DocumentsService
+    get() = service("Documents") { com.basecamp.sdk.services.DocumentsService(this) }
+
+/** Drafts operations. */
+val AccountClient.drafts: DraftsService
+    get() = service("Drafts") { DraftsService(this) }
+
+/** Events operations. */
+val AccountClient.events: EventsService
+    get() = service("Events") { EventsService(this) }
+
+/** Everything operations. */
+val AccountClient.everything: EverythingService
+    get() = service("Everything") { EverythingService(this) }
+
+/** Folders operations. */
+val AccountClient.folders: FoldersService
+    get() = service("Folders") { FoldersService(this) }
+
+/** Forwards operations. */
+val AccountClient.forwards: ForwardsService
+    get() = service("Forwards") { ForwardsService(this) }
+
+/** Gauges operations. */
+val AccountClient.gauges: GaugesService
+    get() = service("Gauges") { GaugesService(this) }
+
+/** GoogleDocuments operations. */
+val AccountClient.googleDocuments: GoogleDocumentsService
+    get() = service("GoogleDocuments") { GoogleDocumentsService(this) }
+
+/** HillCharts operations. */
+val AccountClient.hillCharts: HillChartsService
+    get() = service("HillCharts") { HillChartsService(this) }
+
+/** Lineup operations. */
+val AccountClient.lineup: LineupService
+    get() = service("Lineup") { LineupService(this) }
+
+/** MessageBoards operations. */
+val AccountClient.messageBoards: MessageBoardsService
+    get() = service("MessageBoards") { MessageBoardsService(this) }
+
+/** MessageTypes operations. */
+val AccountClient.messageTypes: MessageTypesService
+    get() = service("MessageTypes") { MessageTypesService(this) }
+
+/** Messages operations. */
+val AccountClient.messages: MessagesService
+    get() = service("Messages") { MessagesService(this) }
+
+/** MyAssignments operations. */
+val AccountClient.myAssignments: MyAssignmentsService
+    get() = service("MyAssignments") { MyAssignmentsService(this) }
+
+/** MyNotes operations. */
+val AccountClient.myNotes: MyNotesService
+    get() = service("MyNotes") { MyNotesService(this) }
+
+/** MyNotifications operations. */
+val AccountClient.myNotifications: MyNotificationsService
+    get() = service("MyNotifications") { MyNotificationsService(this) }
+
+/** People operations. */
+val AccountClient.people: PeopleService
+    get() = service("People") { PeopleService(this) }
+
+/** Projects operations. */
+val AccountClient.projects: ProjectsService
+    get() = service("Projects") { ProjectsService(this) }
+
+/** Recordings operations. */
+val AccountClient.recordings: RecordingsService
+    get() = service("Recordings") { RecordingsService(this) }
+
+/** Reports operations. */
+val AccountClient.reports: ReportsService
+    get() = service("Reports") { ReportsService(this) }
+
+/** Schedules operations. */
+val AccountClient.schedules: com.basecamp.sdk.services.SchedulesService
+    get() = service("Schedules") { com.basecamp.sdk.services.SchedulesService(this) }
+
+/** Search operations. */
+val AccountClient.search: SearchService
+    get() = service("Search") { SearchService(this) }
+
+/** Subscriptions operations. */
+val AccountClient.subscriptions: SubscriptionsService
+    get() = service("Subscriptions") { SubscriptionsService(this) }
+
+/** Templates operations. */
+val AccountClient.templates: TemplatesService
+    get() = service("Templates") { TemplatesService(this) }
+
+/** Timeline operations. */
+val AccountClient.timeline: TimelineService
+    get() = service("Timeline") { TimelineService(this) }
+
+/** Timesheets operations. */
+val AccountClient.timesheets: TimesheetsService
+    get() = service("Timesheets") { TimesheetsService(this) }
+
+/** TodolistGroups operations. */
+val AccountClient.todolistGroups: TodolistGroupsService
+    get() = service("TodolistGroups") { TodolistGroupsService(this) }
+
+/** Todolists operations. */
+val AccountClient.todolists: com.basecamp.sdk.services.TodolistsService
+    get() = service("Todolists") { com.basecamp.sdk.services.TodolistsService(this) }
+
+/** Todos operations. */
+val AccountClient.todos: com.basecamp.sdk.services.TodosService
+    get() = service("Todos") { com.basecamp.sdk.services.TodosService(this) }
+
+/** Todosets operations. */
+val AccountClient.todosets: TodosetsService
+    get() = service("Todosets") { TodosetsService(this) }
+
+/** Tools operations. */
+val AccountClient.tools: ToolsService
+    get() = service("Tools") { ToolsService(this) }
+
+/** Uploads operations. */
+val AccountClient.uploads: com.basecamp.sdk.services.UploadsService
+    get() = service("Uploads") { com.basecamp.sdk.services.UploadsService(this) }
+
+/** Vaults operations. */
+val AccountClient.vaults: VaultsService
+    get() = service("Vaults") { VaultsService(this) }
+
+/** Webhooks operations. */
+val AccountClient.webhooks: WebhooksService
+    get() = service("Webhooks") { WebhooksService(this) }
+
+/** Wormholes operations. */
+val AccountClient.wormholes: WormholesService
+    get() = service("Wormholes") { WormholesService(this) }
+

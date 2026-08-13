@@ -1,0 +1,372 @@
+package basecamp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/basecamp/basecamp-sdk/go/pkg/generated"
+)
+
+// DefaultCommentLimit is the default number of comments to return when no limit is specified.
+const DefaultCommentLimit = 100
+
+// Comment represents a Basecamp comment on a recording.
+type Comment struct {
+	ID               int64     `json:"id"`
+	Status           string    `json:"status"`
+	VisibleToClients bool      `json:"visible_to_clients"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Title            string    `json:"title,omitempty"`
+	InheritsStatus   bool      `json:"inherits_status"`
+	Content          string    `json:"content"`
+	// ContentAttachments holds structured metadata for the downloadable files
+	// embedded in the rich text Content. @required — the API always sends this
+	// array (empty when the content has no inline files). No omitempty, so on
+	// marshal a non-nil slice emits its elements ([] when empty) and a nil
+	// slice emits null; the key is never
+	// dropped. Decode distinguishes a server-sent [] (non-nil) from nil. See
+	// RichTextAttachment.
+	ContentAttachments []RichTextAttachment `json:"content_attachments"`
+	Type               string               `json:"type"`
+	URL                string               `json:"url"`
+	AppURL             string               `json:"app_url"`
+	BookmarkURL        string               `json:"bookmark_url,omitempty"`
+	BoostsCount        int                  `json:"boosts_count,omitempty"`
+	BoostsURL          string               `json:"boosts_url,omitempty"`
+	Parent             *Parent              `json:"parent,omitempty"`
+	Bucket             *Bucket              `json:"bucket,omitempty"`
+	Creator            *Person              `json:"creator,omitempty"`
+}
+
+// CreateCommentRequest specifies the parameters for creating a comment.
+type CreateCommentRequest struct {
+	// Content is the comment text in HTML (required).
+	Content string `json:"content"`
+}
+
+// UpdateCommentRequest specifies the parameters for updating a comment.
+type UpdateCommentRequest struct {
+	// Content is the comment text in HTML (required).
+	Content string `json:"content"`
+}
+
+// CommentListOptions specifies options for listing comments.
+type CommentListOptions struct {
+	// Limit is the maximum number of comments to return.
+	// If 0, uses DefaultCommentLimit (100). Use -1 for unlimited.
+	Limit int
+
+	// Page, if positive, fetches only that page and disables auto-pagination:
+	// exactly one request, no Link rel="next" follow (SPEC §8). A positive
+	// Limit still trims that page; the per-operation default limit does not
+	// apply to it. Use 0 to paginate through all results up to Limit.
+	Page int
+}
+
+// CommentListResult contains the results from listing comments.
+type CommentListResult struct {
+	// Comments is the list of comments returned.
+	Comments []Comment
+	// Meta contains pagination metadata (total count, etc.).
+	Meta ListMeta
+}
+
+// CommentsService handles comment operations.
+type CommentsService struct {
+	client *AccountClient
+}
+
+// NewCommentsService creates a new CommentsService.
+func NewCommentsService(client *AccountClient) *CommentsService {
+	return &CommentsService{client: client}
+}
+
+// List returns comments on a recording.
+//
+// By default, returns up to 100 comments. Use Limit: -1 for unlimited.
+//
+// Pagination options:
+//   - Limit: maximum number of comments to return (0 = 100, -1 = unlimited)
+//   - Page: if positive, fetches only that page and disables auto-pagination
+//
+// The returned CommentListResult includes pagination metadata (TotalCount from
+// X-Total-Count header) when available.
+func (s *CommentsService) List(ctx context.Context, recordingID int64, opts *CommentListOptions) (result *CommentListResult, err error) {
+	op := OperationInfo{
+		Service: "Comments", Operation: "List",
+		ResourceType: "comment", IsMutation: false,
+		ResourceID: recordingID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	var params *generated.ListCommentsParams
+	if opts != nil && opts.Page > 0 {
+		var page *int32
+		if page, err = pageParam(opts.Page); err != nil {
+			return nil, err
+		}
+		params = &generated.ListCommentsParams{Page: page}
+	}
+
+	// Call generated client for first page (spec-conformant - no manual path construction)
+	resp, err := s.client.parent.gen.ListCommentsWithResponse(ctx, s.client.accountID, recordingID, params)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+
+	// Capture total count from X-Total-Count header (first page only)
+	totalCount := parseTotalCount(resp.HTTPResponse)
+
+	// Parse first page
+	var comments []Comment
+	if resp.JSON200 != nil {
+		for _, gc := range *resp.JSON200 {
+			comments = append(comments, commentFromGenerated(gc))
+		}
+	}
+
+	// Handle single page fetch (--page flag)
+	if opts != nil && opts.Page > 0 {
+		keep, truncated := pageCap(len(comments), opts.Limit, resp.HTTPResponse)
+		return &CommentListResult{Comments: comments[:keep], Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+	}
+
+	// Determine limit: 0 = default (100), -1 = unlimited, >0 = specific limit
+	limit := DefaultCommentLimit
+	if opts != nil {
+		if opts.Limit < 0 {
+			limit = 0 // unlimited
+		} else if opts.Limit > 0 {
+			limit = opts.Limit
+		}
+	}
+
+	// Check if we already have enough items
+	if limit > 0 && len(comments) >= limit {
+		return &CommentListResult{Comments: comments[:limit], Meta: ListMeta{TotalCount: totalCount, Truncated: isFirstPageTruncated(resp.HTTPResponse, len(comments), limit)}}, nil
+	}
+
+	// Follow pagination via Link headers (uses absolute URLs from API, no path construction)
+	rawMore, truncated, err := s.client.parent.followPagination(ctx, resp.HTTPResponse, len(comments), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse additional pages
+	for _, raw := range rawMore {
+		var gc generated.Comment
+		if err := json.Unmarshal(raw, &gc); err != nil {
+			return nil, fmt.Errorf("failed to parse comment: %w", err)
+		}
+		comments = append(comments, commentFromGenerated(gc))
+	}
+
+	return &CommentListResult{Comments: comments, Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+}
+
+// Get returns a comment by ID.
+func (s *CommentsService) Get(ctx context.Context, commentID int64) (result *Comment, err error) {
+	op := OperationInfo{
+		Service: "Comments", Operation: "Get",
+		ResourceType: "comment", IsMutation: false,
+		ResourceID: commentID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.GetCommentWithResponse(ctx, s.client.accountID, commentID)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	comment := commentFromGenerated(*resp.JSON200)
+	return &comment, nil
+}
+
+// Create creates a new comment on a recording.
+// Returns the created comment.
+func (s *CommentsService) Create(ctx context.Context, recordingID int64, req *CreateCommentRequest) (result *Comment, err error) {
+	op := OperationInfo{
+		Service: "Comments", Operation: "Create",
+		ResourceType: "comment", IsMutation: true,
+		ResourceID: recordingID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil || req.Content == "" {
+		err = ErrUsage("comment content is required")
+		return nil, err
+	}
+
+	body := generated.CreateCommentJSONRequestBody{
+		Content: req.Content,
+	}
+
+	resp, err := s.client.parent.gen.CreateCommentWithResponse(ctx, s.client.accountID, recordingID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON201 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	comment := commentFromGenerated(*resp.JSON201)
+	return &comment, nil
+}
+
+// Update updates an existing comment.
+// Returns the updated comment.
+func (s *CommentsService) Update(ctx context.Context, commentID int64, req *UpdateCommentRequest) (result *Comment, err error) {
+	op := OperationInfo{
+		Service: "Comments", Operation: "Update",
+		ResourceType: "comment", IsMutation: true,
+		ResourceID: commentID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil || req.Content == "" {
+		err = ErrUsage("comment content is required")
+		return nil, err
+	}
+
+	body := generated.UpdateCommentJSONRequestBody{
+		Content: req.Content,
+	}
+
+	resp, err := s.client.parent.gen.UpdateCommentWithResponse(ctx, s.client.accountID, commentID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	comment := commentFromGenerated(*resp.JSON200)
+	return &comment, nil
+}
+
+// Trash moves a comment to the trash.
+// Trashed comments can be recovered from the trash.
+func (s *CommentsService) Trash(ctx context.Context, commentID int64) (err error) {
+	op := OperationInfo{
+		Service: "Comments", Operation: "Trash",
+		ResourceType: "comment", IsMutation: true,
+		ResourceID: commentID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.TrashRecordingWithResponse(ctx, s.client.accountID, commentID)
+	if err != nil {
+		return err
+	}
+	return checkResponse(resp.HTTPResponse, resp.Body)
+}
+
+// Note: Permanent deletion of comments is not supported by the Basecamp API.
+// Use Trash() to move comments to trash (recoverable via the web UI).
+
+// commentFromGenerated converts a generated Comment to our clean Comment type.
+func commentFromGenerated(gc generated.Comment) Comment {
+	c := Comment{
+		Status:           gc.Status,
+		VisibleToClients: gc.VisibleToClients,
+		Title:            gc.Title,
+		InheritsStatus:   gc.InheritsStatus,
+		Content:          gc.Content,
+		Type:             gc.Type,
+		URL:              gc.Url,
+		AppURL:           gc.AppUrl,
+		BookmarkURL:      deref(gc.BookmarkUrl),
+		BoostsCount:      int(deref(gc.BoostsCount)),
+		BoostsURL:        deref(gc.BoostsUrl),
+		CreatedAt:        gc.CreatedAt,
+		UpdatedAt:        gc.UpdatedAt,
+	}
+
+	if gc.Id != 0 {
+		c.ID = gc.Id
+	}
+
+	// Convert nested types
+	if gc.Parent.Id != 0 || gc.Parent.Title != "" {
+		c.Parent = &Parent{
+			ID:     gc.Parent.Id,
+			Title:  gc.Parent.Title,
+			Type:   gc.Parent.Type,
+			URL:    gc.Parent.Url,
+			AppURL: gc.Parent.AppUrl,
+		}
+	}
+
+	if gc.Bucket.Id != 0 || gc.Bucket.Name != "" {
+		c.Bucket = &Bucket{
+			ID:   gc.Bucket.Id,
+			Name: gc.Bucket.Name,
+			Type: gc.Bucket.Type,
+		}
+	}
+
+	if gc.Creator.Id != 0 || gc.Creator.Name != "" {
+		creator := personFromGenerated(gc.Creator)
+		c.Creator = &creator
+	}
+
+	c.ContentAttachments = richTextAttachmentsFromGenerated(gc.ContentAttachments)
+
+	return c
+}

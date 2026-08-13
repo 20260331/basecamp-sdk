@@ -1,0 +1,188 @@
+/**
+ * Vaults service for the Basecamp API.
+ *
+ * @generated from OpenAPI spec - do not edit directly
+ */
+
+import { BaseService } from "../../services/base.js";
+import type { components } from "../schema.js";
+import { ListResult } from "../../pagination.js";
+import type { PaginationOptions } from "../../pagination.js";
+import { Errors } from "../../errors.js";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+/** Vault entity from the Basecamp API. */
+export type Vault = components["schemas"]["Vault"];
+
+/**
+ * Request parameters for update.
+ */
+export interface UpdateVaultRequest {
+  /** Title */
+  title?: string;
+}
+
+/**
+ * Options for list.
+ */
+export interface ListVaultOptions extends PaginationOptions {
+  /** Page number for paginating through results. Defaults to 1. A positive value selects exactly that page, not a starting offset; see SPEC section 8. */
+  page?: number;
+}
+
+/**
+ * Request parameters for create.
+ */
+export interface CreateVaultRequest {
+  /** Title */
+  title: string;
+}
+
+
+// =============================================================================
+// Service
+// =============================================================================
+
+/**
+ * Service for Vaults operations.
+ */
+export class VaultsService extends BaseService {
+
+  /**
+   * Get a single vault by id
+   * @param vaultId - The vault ID
+   * @returns The Vault
+   * @throws {BasecampError} If the resource is not found
+   *
+   * @example
+   * ```ts
+   * const result = await client.vaults.get(123);
+   * ```
+   */
+  async get(vaultId: number): Promise<Vault> {
+    const response = await this.request(
+      {
+        service: "Vaults",
+        operation: "GetVault",
+        resourceType: "vault",
+        isMutation: false,
+        resourceId: vaultId,
+      },
+      () =>
+        this.client.GET("/vaults/{vaultId}", {
+          params: {
+            path: { vaultId },
+          },
+        })
+    );
+    return response;
+  }
+
+  /**
+   * Update an existing vault
+   * @param vaultId - The vault ID
+   * @param req - Vault update parameters
+   * @returns The Vault
+   * @throws {BasecampError} If the resource is not found or fields are invalid
+   *
+   * @example
+   * ```ts
+   * const result = await client.vaults.update(123, { });
+   * ```
+   */
+  async update(vaultId: number, req: UpdateVaultRequest): Promise<Vault> {
+    const response = await this.request(
+      {
+        service: "Vaults",
+        operation: "UpdateVault",
+        resourceType: "vault",
+        isMutation: true,
+        resourceId: vaultId,
+      },
+      () =>
+        this.client.PUT("/vaults/{vaultId}", {
+          params: {
+            path: { vaultId },
+          },
+          body: {
+            title: req.title,
+          },
+        })
+    );
+    return response;
+  }
+
+  /**
+   * List vaults (subfolders) in a vault
+   * @param vaultId - The vault ID
+   * @param options - Optional query parameters
+   * @returns All Vault across all pages, with .meta.totalCount
+   *
+   * @example
+   * ```ts
+   * const result = await client.vaults.list(123);
+   *
+   * // With options
+   * const filtered = await client.vaults.list(123, { page: 1 });
+   * ```
+   */
+  async list(vaultId: number, options?: ListVaultOptions): Promise<ListResult<Vault>> {
+    return this.requestPaginated(
+      {
+        service: "Vaults",
+        operation: "ListVaults",
+        resourceType: "vault",
+        isMutation: false,
+        resourceId: vaultId,
+      },
+      () =>
+        this.client.GET("/vaults/{vaultId}/vaults.json", {
+          params: {
+            path: { vaultId },
+            query: { page: options?.page },
+          },
+        })
+      , options
+    );
+  }
+
+  /**
+   * Create a new vault (subfolder) in a vault
+   * @param vaultId - The vault ID
+   * @param req - Vault creation parameters
+   * @returns The Vault
+   * @throws {BasecampError} If required fields are missing or invalid
+   *
+   * @example
+   * ```ts
+   * const result = await client.vaults.create(123, { title: "example" });
+   * ```
+   */
+  async create(vaultId: number, req: CreateVaultRequest): Promise<Vault> {
+    if (!req.title) {
+      throw Errors.validation("Title is required");
+    }
+    const response = await this.request(
+      {
+        service: "Vaults",
+        operation: "CreateVault",
+        resourceType: "vault",
+        isMutation: true,
+        resourceId: vaultId,
+      },
+      () =>
+        this.client.POST("/vaults/{vaultId}/vaults.json", {
+          params: {
+            path: { vaultId },
+          },
+          body: {
+            title: req.title,
+          },
+        })
+    );
+    return response;
+  }
+}

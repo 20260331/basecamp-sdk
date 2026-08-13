@@ -1,0 +1,29 @@
+# Routes the detector has classified as not requiring a dedicated brief.
+# Each entry must justify why no brief is needed. Schema: allowlist-schema.json.
+#
+# Two categories:
+#   not_api_resource         — clearly transient nav state, internal endpoints,
+#                              or routes BC3 has explicitly excluded from API surface
+#   absorbed_under_other_brief — duplicates of routes already covered by another brief
+not_api_resource:
+  - path: my/navigation/menu/projects
+    reason: "Nav UI state, not a persistent API resource. BC3 plan §Out of scope: my/navigation/menu/* and my/navigation/today/* are transient nav state."
+    classified: 2026-05-01
+  - path: my/sidebar/badge
+    reason: "Transient nav state per BC3 plan §Out of scope: my/sidebar/* (badge, readings, bubble_ups, circles)."
+    classified: 2026-05-01
+  - path: my/sidebar/readings
+    reason: "Transient nav state per BC3 plan §Out of scope."
+    classified: 2026-05-01
+  - path: my/sidebar/bubble_ups
+    reason: "Transient nav state per BC3 plan §Out of scope."
+    classified: 2026-05-01
+  - path: my/sidebar/circles
+    reason: "Transient nav state per BC3 plan §Out of scope."
+    classified: 2026-05-01
+
+# Intentionally empty: the former `timelines/searches` record was removed in
+# SDK #399 — that route does not exist in bc3 (verified against config/routes.rb).
+# A false "existing, absorbed elsewhere" record would suppress detection if such
+# an endpoint were ever introduced. See spec/api-gaps/search-filter-additions.md.
+absorbed_under_other_brief: []

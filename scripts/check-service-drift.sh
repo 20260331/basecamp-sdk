@@ -1,0 +1,120 @@
+#!/bin/bash
+# check-service-drift.sh
+#
+# Compares generated client operations against service layer usage.
+# Detects drift between the OpenAPI spec and the service layer wrapper.
+#
+# Run after: make generate
+# Exit codes:
+#   0 = No drift detected
+#   1 = Drift detected (new generated ops not wrapped, or calls to missing ops)
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SDK_DIR="$(dirname "$SCRIPT_DIR")/go"
+
+GENERATED_FILE="$SDK_DIR/pkg/generated/client.gen.go"
+SERVICE_DIR="$SDK_DIR/pkg/basecamp"
+
+# Operations intentionally not yet wrapped. Keep this empty: every generated
+# operation must have an ergonomic wrapper in go/pkg/basecamp/.
+EXCLUDED_OPS=()
+
+# Temporary files
+GEN_OPS=$(mktemp)
+SVC_OPS=$(mktemp)
+EXCLUDED=$(mktemp)
+trap "rm -f $GEN_OPS $SVC_OPS $EXCLUDED" EXIT
+
+# Extract generated operations, normalizing WithBodyWithResponse to base operation name
+# e.g., CreateAttachmentWithBodyWithResponse -> CreateAttachment
+#       ListProjectsWithResponse -> ListProjects
+grep "^func (c \*ClientWithResponses)" "$GENERATED_FILE" 2>/dev/null \
+  | sed 's/.*) \([A-Za-z]*\)WithResponse.*/\1/' \
+  | sed 's/WithBody$//' \
+  | sort -u > "$GEN_OPS"
+
+# Extract service layer calls to gen.*WithResponse (excluding test files)
+# Normalize WithBodyWithResponse calls to base operation name
+#
+# A wrapper may also call the two stages separately — gen.<Op>(...) for the
+# request, then generated.Parse<Op>Response(...) for the decode — when it has to
+# tell a preflight or transport failure apart from a malformed body, which the
+# combined <Op>WithResponse conflates into one error (DocumentsService.Get does
+# this; see documentDecodeError). Parse<Op>Response names the operation exactly
+# and appears nowhere else, so it is counted as a wrapper too.
+for f in "$SERVICE_DIR"/*.go; do
+  case "$f" in
+    *_test.go) continue ;;
+  esac
+  grep "\.gen\.[A-Za-z]*WithResponse" "$f" 2>/dev/null || true
+done | sed 's/.*\.gen\.\([A-Za-z]*\)WithResponse.*/\1/' \
+  | sed 's/WithBody$//' > "$SVC_OPS.raw"
+
+for f in "$SERVICE_DIR"/*.go; do
+  case "$f" in
+    *_test.go) continue ;;
+  esac
+  grep -o "generated\.Parse[A-Za-z]*Response" "$f" 2>/dev/null || true
+done | sed 's/generated\.Parse\([A-Za-z]*\)Response/\1/' >> "$SVC_OPS.raw"
+
+sort -u "$SVC_OPS.raw" > "$SVC_OPS"
+rm -f "$SVC_OPS.raw"
+
+# Count operations
+GEN_COUNT=$(wc -l < "$GEN_OPS" | tr -d ' ')
+SVC_COUNT=$(wc -l < "$SVC_OPS" | tr -d ' ')
+
+echo "Generated client operations: $GEN_COUNT"
+echo "Service layer wrapped operations: $SVC_COUNT"
+echo ""
+
+# Build exclusion file
+printf '%s\n' "${EXCLUDED_OPS[@]}" | sort -u > "$EXCLUDED"
+
+# Find operations in generated but not wrapped by services (excluding known gaps)
+UNWRAPPED=$(comm -23 "$GEN_OPS" "$SVC_OPS" | comm -23 - "$EXCLUDED")
+UNWRAPPED_COUNT=$(echo "$UNWRAPPED" | grep -c . || true)
+
+# Find service calls to non-existent operations
+MISSING=$(comm -13 "$GEN_OPS" "$SVC_OPS")
+MISSING_COUNT=$(echo "$MISSING" | grep -c . || true)
+
+HAS_DRIFT=0
+
+if [ "$UNWRAPPED_COUNT" -gt 0 ]; then
+  echo "=== ERROR: Generated operations NOT wrapped by service layer ($UNWRAPPED_COUNT) ==="
+  echo "$UNWRAPPED"
+  echo ""
+  echo "Every generated operation must have a service wrapper in go/pkg/basecamp/."
+  echo "Add wrappers for these operations or update this check if they are intentionally excluded."
+  HAS_DRIFT=1
+fi
+
+if [ "$MISSING_COUNT" -gt 0 ]; then
+  echo "=== ERROR: Service calls to NON-EXISTENT generated operations ($MISSING_COUNT) ==="
+  echo "$MISSING"
+  echo ""
+  echo "These service methods call generated operations that don't exist."
+  echo "Either the spec is missing these operations, or there's a typo in the service layer."
+  HAS_DRIFT=1
+fi
+
+# Summary
+if [ "$GEN_COUNT" -eq 0 ]; then
+  echo "ERROR: No generated operations found. Check GENERATED_FILE path or parsing."
+  exit 1
+fi
+COVERAGE_PCT=$((SVC_COUNT * 100 / GEN_COUNT))
+echo "Coverage: $SVC_COUNT / $GEN_COUNT operations ($COVERAGE_PCT%)"
+
+if [ "$HAS_DRIFT" -eq 1 ]; then
+  echo ""
+  echo "DRIFT DETECTED - Fix the issues above before proceeding."
+  exit 1
+fi
+
+echo ""
+echo "No critical drift detected."
+exit 0

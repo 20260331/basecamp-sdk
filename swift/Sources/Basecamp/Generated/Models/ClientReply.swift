@@ -1,0 +1,57 @@
+// @generated from OpenAPI spec — do not edit directly
+import Foundation
+
+public struct ClientReply: Codable, Sendable {
+    public let appUrl: String
+    public let bucket: RecordingBucket
+    public let content: String
+    public let contentAttachments: [RichTextAttachment]
+    public let createdAt: String
+    public let creator: Person
+    public let id: Int
+    public let inheritsStatus: Bool
+    public let parent: RecordingParent
+    public let status: String
+    public let title: String
+    public let type: String
+    public let updatedAt: String
+    public let url: String
+    public let visibleToClients: Bool
+    public var bookmarkUrl: String?
+
+    public init(
+        appUrl: String,
+        bucket: RecordingBucket,
+        content: String,
+        contentAttachments: [RichTextAttachment],
+        createdAt: String,
+        creator: Person,
+        id: Int,
+        inheritsStatus: Bool,
+        parent: RecordingParent,
+        status: String,
+        title: String,
+        type: String,
+        updatedAt: String,
+        url: String,
+        visibleToClients: Bool,
+        bookmarkUrl: String? = nil
+    ) {
+        self.appUrl = appUrl
+        self.bucket = bucket
+        self.content = content
+        self.contentAttachments = contentAttachments
+        self.createdAt = createdAt
+        self.creator = creator
+        self.id = id
+        self.inheritsStatus = inheritsStatus
+        self.parent = parent
+        self.status = status
+        self.title = title
+        self.type = type
+        self.updatedAt = updatedAt
+        self.url = url
+        self.visibleToClients = visibleToClients
+        self.bookmarkUrl = bookmarkUrl
+    }
+}

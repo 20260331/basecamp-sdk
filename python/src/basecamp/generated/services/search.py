@@ -1,0 +1,126 @@
+# @generated from OpenAPI spec — do not edit manually
+
+from __future__ import annotations
+
+from typing import Any
+
+from basecamp.generated.services._base import BaseService
+from basecamp.generated.services._async_base import AsyncBaseService
+from basecamp._pagination import ListResult
+from basecamp.hooks import OperationInfo
+
+
+class SearchService(BaseService):
+    def search(
+        self,
+        *,
+        q: str,
+        type_names: list[str] | None = None,
+        bucket_ids: list[int] | None = None,
+        creator_ids: list[int] | None = None,
+        file_type: str | None = None,
+        exclude_chat: bool | None = None,
+        since: str | None = None,
+        sort: str | None = None,
+        type: str | None = None,
+        bucket_id: int | None = None,
+        creator_id: int | None = None,
+        page: int | None = None,
+        max_items: int | None = None,
+    ) -> ListResult:
+        """Deprecated parameters (prefer the replacement):
+
+        - type: prefer type_names[].
+        - bucket_id: prefer bucket_ids[].
+        - creator_id: prefer creator_ids[].
+        """
+        return self._request_paginated(
+            OperationInfo(service="search", operation="search", is_mutation=False),
+            "/search.json",
+            params={
+                k: v
+                for k, v in {
+                    "q": q,
+                    "type_names[]": type_names,
+                    "bucket_ids[]": bucket_ids,
+                    "creator_ids[]": creator_ids,
+                    "file_type": file_type,
+                    "exclude_chat": exclude_chat,
+                    "since": since,
+                    "sort": sort,
+                    "type": type,
+                    "bucket_id": bucket_id,
+                    "creator_id": creator_id,
+                    "page": page,
+                }.items()
+                if v is not None
+            },
+            max_items=max_items,
+            operation="Search",
+        )
+
+    def metadata(self) -> dict[str, Any]:
+        return self._request(
+            OperationInfo(service="search", operation="metadata", is_mutation=False),
+            "GET",
+            "/searches/metadata.json",
+            operation="GetSearchMetadata",
+        )
+
+
+class AsyncSearchService(AsyncBaseService):
+    async def search(
+        self,
+        *,
+        q: str,
+        type_names: list[str] | None = None,
+        bucket_ids: list[int] | None = None,
+        creator_ids: list[int] | None = None,
+        file_type: str | None = None,
+        exclude_chat: bool | None = None,
+        since: str | None = None,
+        sort: str | None = None,
+        type: str | None = None,
+        bucket_id: int | None = None,
+        creator_id: int | None = None,
+        page: int | None = None,
+        max_items: int | None = None,
+    ) -> ListResult:
+        """Deprecated parameters (prefer the replacement):
+
+        - type: prefer type_names[].
+        - bucket_id: prefer bucket_ids[].
+        - creator_id: prefer creator_ids[].
+        """
+        return await self._request_paginated(
+            OperationInfo(service="search", operation="search", is_mutation=False),
+            "/search.json",
+            params={
+                k: v
+                for k, v in {
+                    "q": q,
+                    "type_names[]": type_names,
+                    "bucket_ids[]": bucket_ids,
+                    "creator_ids[]": creator_ids,
+                    "file_type": file_type,
+                    "exclude_chat": exclude_chat,
+                    "since": since,
+                    "sort": sort,
+                    "type": type,
+                    "bucket_id": bucket_id,
+                    "creator_id": creator_id,
+                    "page": page,
+                }.items()
+                if v is not None
+            },
+            max_items=max_items,
+            operation="Search",
+        )
+
+    async def metadata(self) -> dict[str, Any]:
+        return await self._request(
+            OperationInfo(service="search", operation="metadata", is_mutation=False),
+            "GET",
+            "/searches/metadata.json",
+            operation="GetSearchMetadata",
+        )

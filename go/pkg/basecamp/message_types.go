@@ -1,0 +1,315 @@
+package basecamp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/basecamp/basecamp-sdk/go/pkg/generated"
+)
+
+// MessageTypeListOptions specifies options for listing message types.
+type MessageTypeListOptions struct {
+	// Limit is the maximum number of message types to return.
+	// If 0, returns all. Use -1 for unlimited (same as 0).
+	Limit int
+
+	// Page: the page number is ignored -- this endpoint is not paginated
+	// server-side -- but any positive value still disables auto-pagination,
+	// returning the single response as-is without applying Limit.
+	Page int
+}
+
+// MessageType represents a Basecamp message type (category) in a project.
+type MessageType struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Icon      string    `json:"icon"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CreateMessageTypeRequest specifies the parameters for creating a message type.
+type CreateMessageTypeRequest struct {
+	// Name is the message type name (required).
+	Name string `json:"name"`
+	// Icon is the message type icon (required).
+	Icon string `json:"icon"`
+}
+
+// UpdateMessageTypeRequest specifies the parameters for updating a message type.
+type UpdateMessageTypeRequest struct {
+	// Name is the message type name (optional).
+	Name string `json:"name,omitempty"`
+	// Icon is the message type icon (optional).
+	Icon string `json:"icon,omitempty"`
+}
+
+// MessageTypeListResult contains the results from listing message types.
+type MessageTypeListResult struct {
+	// MessageTypes is the list of message types returned.
+	MessageTypes []MessageType
+	// Meta contains pagination metadata (total count, etc.).
+	Meta ListMeta
+}
+
+// MessageTypesService handles message type operations.
+type MessageTypesService struct {
+	client *AccountClient
+}
+
+// NewMessageTypesService creates a new MessageTypesService.
+func NewMessageTypesService(client *AccountClient) *MessageTypesService {
+	return &MessageTypesService{client: client}
+}
+
+// List returns all message types for the given project.
+//
+// Pagination options:
+//   - Limit: maximum number of message types to return (0 = all, -1 = unlimited)
+//   - Page: the page number is ignored (this endpoint is not paginated
+//     server-side), but any positive value still disables auto-pagination,
+//     returning the single response as-is without applying Limit
+//
+// The returned MessageTypeListResult includes pagination metadata (TotalCount from
+// X-Total-Count header) when available.
+func (s *MessageTypesService) List(ctx context.Context, bucketID int64, opts *MessageTypeListOptions) (result *MessageTypeListResult, err error) {
+	op := OperationInfo{
+		Service: "MessageTypes", Operation: "List",
+		ResourceType: "message_type", IsMutation: false,
+		ProjectID: bucketID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.ListMessageTypesWithResponse(ctx, s.client.accountID, bucketID)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+
+	// Capture total count from X-Total-Count header
+	totalCount := parseTotalCount(resp.HTTPResponse)
+
+	// Parse first page
+	var types []MessageType
+	if resp.JSON200 != nil {
+		for _, gt := range *resp.JSON200 {
+			types = append(types, messageTypeFromGenerated(gt))
+		}
+	}
+
+	// Handle single page fetch (--page flag)
+	if opts != nil && opts.Page > 0 {
+		keep, truncated := pageCap(len(types), opts.Limit, resp.HTTPResponse)
+		return &MessageTypeListResult{MessageTypes: types[:keep], Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+	}
+
+	// Determine limit: 0 = all (no limit)
+	limit := 0
+	if opts != nil {
+		if opts.Limit < 0 {
+			limit = 0 // unlimited
+		} else if opts.Limit > 0 {
+			limit = opts.Limit
+		}
+	}
+
+	// Check if we already have enough items
+	if limit > 0 && len(types) >= limit {
+		return &MessageTypeListResult{MessageTypes: types[:limit], Meta: ListMeta{TotalCount: totalCount, Truncated: isFirstPageTruncated(resp.HTTPResponse, len(types), limit)}}, nil
+	}
+
+	// Follow pagination via Link headers
+	rawMore, truncated, err := s.client.parent.followPagination(ctx, resp.HTTPResponse, len(types), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse additional pages
+	for _, raw := range rawMore {
+		var gt generated.MessageType
+		if err := json.Unmarshal(raw, &gt); err != nil {
+			return nil, fmt.Errorf("failed to parse message type: %w", err)
+		}
+		types = append(types, messageTypeFromGenerated(gt))
+	}
+
+	return &MessageTypeListResult{MessageTypes: types, Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+}
+
+// Get returns a message type by ID.
+func (s *MessageTypesService) Get(ctx context.Context, bucketID, typeID int64) (result *MessageType, err error) {
+	op := OperationInfo{
+		Service: "MessageTypes", Operation: "Get",
+		ResourceType: "message_type", IsMutation: false,
+		ProjectID:  bucketID,
+		ResourceID: typeID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.GetMessageTypeWithResponse(ctx, s.client.accountID, bucketID, typeID)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	msgType := messageTypeFromGenerated(*resp.JSON200)
+	return &msgType, nil
+}
+
+// Create creates a new message type in a project.
+// Returns the created message type.
+func (s *MessageTypesService) Create(ctx context.Context, bucketID int64, req *CreateMessageTypeRequest) (result *MessageType, err error) {
+	op := OperationInfo{
+		Service: "MessageTypes", Operation: "Create",
+		ResourceType: "message_type", IsMutation: true,
+		ProjectID: bucketID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil || req.Name == "" {
+		err = ErrUsage("message type name is required")
+		return nil, err
+	}
+	if req.Icon == "" {
+		err = ErrUsage("message type icon is required")
+		return nil, err
+	}
+
+	body := generated.CreateMessageTypeJSONRequestBody{
+		Name: req.Name,
+		Icon: req.Icon,
+	}
+
+	resp, err := s.client.parent.gen.CreateMessageTypeWithResponse(ctx, s.client.accountID, bucketID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON201 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	msgType := messageTypeFromGenerated(*resp.JSON201)
+	return &msgType, nil
+}
+
+// Update updates an existing message type.
+// Returns the updated message type.
+func (s *MessageTypesService) Update(ctx context.Context, bucketID, typeID int64, req *UpdateMessageTypeRequest) (result *MessageType, err error) {
+	op := OperationInfo{
+		Service: "MessageTypes", Operation: "Update",
+		ResourceType: "message_type", IsMutation: true,
+		ProjectID:  bucketID,
+		ResourceID: typeID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil {
+		err = ErrUsage("update request is required")
+		return nil, err
+	}
+
+	body := generated.UpdateMessageTypeJSONRequestBody{}
+	if req.Name != "" {
+		body.Name = &req.Name
+	}
+	if req.Icon != "" {
+		body.Icon = &req.Icon
+	}
+
+	resp, err := s.client.parent.gen.UpdateMessageTypeWithResponse(ctx, s.client.accountID, bucketID, typeID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	msgType := messageTypeFromGenerated(*resp.JSON200)
+	return &msgType, nil
+}
+
+// Delete deletes a message type from a project.
+func (s *MessageTypesService) Delete(ctx context.Context, bucketID, typeID int64) (err error) {
+	op := OperationInfo{
+		Service: "MessageTypes", Operation: "Delete",
+		ResourceType: "message_type", IsMutation: true,
+		ProjectID:  bucketID,
+		ResourceID: typeID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.DeleteMessageTypeWithResponse(ctx, s.client.accountID, bucketID, typeID)
+	if err != nil {
+		return err
+	}
+	return checkResponse(resp.HTTPResponse, resp.Body)
+}
+
+// messageTypeFromGenerated converts a generated MessageType to our clean MessageType type.
+func messageTypeFromGenerated(gt generated.MessageType) MessageType {
+	mt := MessageType{
+		Name:      gt.Name,
+		Icon:      gt.Icon,
+		CreatedAt: gt.CreatedAt,
+		UpdatedAt: gt.UpdatedAt,
+	}
+
+	if gt.Id != 0 {
+		mt.ID = gt.Id
+	}
+
+	return mt
+}

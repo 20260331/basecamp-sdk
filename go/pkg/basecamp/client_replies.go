@@ -1,0 +1,237 @@
+package basecamp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/basecamp/basecamp-sdk/go/pkg/generated"
+)
+
+// ClientReplyListOptions specifies options for listing client replies.
+type ClientReplyListOptions struct {
+	// Limit is the maximum number of client replies to return.
+	// If 0, returns all. Use -1 for unlimited (same as 0).
+	Limit int
+
+	// Page, if positive, fetches only that page and disables auto-pagination.
+	Page int
+}
+
+// ClientReply represents a reply to a client correspondence or approval.
+type ClientReply struct {
+	ID               int64     `json:"id"`
+	Status           string    `json:"status"`
+	VisibleToClients bool      `json:"visible_to_clients"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Title            string    `json:"title"`
+	InheritsStatus   bool      `json:"inherits_status"`
+	Type             string    `json:"type"`
+	URL              string    `json:"url"`
+	AppURL           string    `json:"app_url"`
+	BookmarkURL      string    `json:"bookmark_url"`
+	Parent           *Parent   `json:"parent,omitempty"`
+	Bucket           *Bucket   `json:"bucket,omitempty"`
+	Creator          *Person   `json:"creator,omitempty"`
+	Content          string    `json:"content"`
+	// ContentAttachments holds structured metadata for the downloadable files
+	// embedded in the rich text Content. @required — the API always sends this
+	// array (empty when the content has no inline files). No omitempty, so on
+	// marshal a non-nil slice emits its elements ([] when empty) and a nil
+	// slice emits null; the key is never
+	// dropped. Decode distinguishes a server-sent [] (non-nil) from nil. See
+	// RichTextAttachment.
+	ContentAttachments []RichTextAttachment `json:"content_attachments"`
+}
+
+// ClientReplyListResult contains the results from listing client replies.
+type ClientReplyListResult struct {
+	// Replies is the list of client replies returned.
+	Replies []ClientReply
+	// Meta contains pagination metadata (total count, etc.).
+	Meta ListMeta
+}
+
+// ClientRepliesService handles client reply operations.
+type ClientRepliesService struct {
+	client *AccountClient
+}
+
+// NewClientRepliesService creates a new ClientRepliesService.
+func NewClientRepliesService(client *AccountClient) *ClientRepliesService {
+	return &ClientRepliesService{client: client}
+}
+
+// List returns all replies for a client recording (correspondence or approval).
+//
+// Pagination options:
+//   - Limit: maximum number of client replies to return (0 = all, -1 = unlimited)
+//   - Page: if positive, fetches only that page and disables auto-pagination
+//
+// The returned ClientReplyListResult includes pagination metadata (TotalCount from
+// X-Total-Count header) when available.
+func (s *ClientRepliesService) List(ctx context.Context, bucketID, recordingID int64, opts *ClientReplyListOptions) (result *ClientReplyListResult, err error) {
+	op := OperationInfo{
+		Service: "ClientReplies", Operation: "List",
+		ResourceType: "client_reply", IsMutation: false,
+		ResourceID: recordingID,
+		ProjectID:  bucketID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	var params *generated.ListClientRepliesParams
+	if opts != nil && opts.Page > 0 {
+		var page *int32
+		if page, err = pageParam(opts.Page); err != nil {
+			return nil, err
+		}
+		params = &generated.ListClientRepliesParams{Page: page}
+	}
+
+	resp, err := s.client.parent.gen.ListClientRepliesWithResponse(ctx, s.client.accountID, bucketID, recordingID, params)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+
+	// Capture total count from X-Total-Count header
+	totalCount := parseTotalCount(resp.HTTPResponse)
+
+	// Parse first page
+	var replies []ClientReply
+	if resp.JSON200 != nil {
+		for _, gr := range *resp.JSON200 {
+			replies = append(replies, clientReplyFromGenerated(gr))
+		}
+	}
+
+	// Handle single page fetch (--page flag)
+	if opts != nil && opts.Page > 0 {
+		keep, truncated := pageCap(len(replies), opts.Limit, resp.HTTPResponse)
+		return &ClientReplyListResult{Replies: replies[:keep], Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+	}
+
+	// Determine limit: 0 = all (no limit)
+	limit := 0
+	if opts != nil {
+		if opts.Limit < 0 {
+			limit = 0 // unlimited
+		} else if opts.Limit > 0 {
+			limit = opts.Limit
+		}
+	}
+
+	// Check if we already have enough items
+	if limit > 0 && len(replies) >= limit {
+		return &ClientReplyListResult{Replies: replies[:limit], Meta: ListMeta{TotalCount: totalCount, Truncated: isFirstPageTruncated(resp.HTTPResponse, len(replies), limit)}}, nil
+	}
+
+	// Follow pagination via Link headers
+	rawMore, truncated, err := s.client.parent.followPagination(ctx, resp.HTTPResponse, len(replies), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse additional pages
+	for _, raw := range rawMore {
+		var gr generated.ClientReply
+		if err := json.Unmarshal(raw, &gr); err != nil {
+			return nil, fmt.Errorf("failed to parse client reply: %w", err)
+		}
+		replies = append(replies, clientReplyFromGenerated(gr))
+	}
+
+	return &ClientReplyListResult{Replies: replies, Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+}
+
+// Get returns a specific client reply.
+func (s *ClientRepliesService) Get(ctx context.Context, bucketID, recordingID, replyID int64) (result *ClientReply, err error) {
+	op := OperationInfo{
+		Service: "ClientReplies", Operation: "Get",
+		ResourceType: "client_reply", IsMutation: false,
+		ResourceID: replyID,
+		ProjectID:  bucketID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.GetClientReplyWithResponse(ctx, s.client.accountID, bucketID, recordingID, replyID)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	reply := clientReplyFromGenerated(*resp.JSON200)
+	return &reply, nil
+}
+
+// clientReplyFromGenerated converts a generated ClientReply to our clean type.
+func clientReplyFromGenerated(gr generated.ClientReply) ClientReply {
+	r := ClientReply{
+		Status:           gr.Status,
+		VisibleToClients: gr.VisibleToClients,
+		CreatedAt:        gr.CreatedAt,
+		UpdatedAt:        gr.UpdatedAt,
+		Title:            gr.Title,
+		InheritsStatus:   gr.InheritsStatus,
+		Type:             gr.Type,
+		URL:              gr.Url,
+		AppURL:           gr.AppUrl,
+		BookmarkURL:      deref(gr.BookmarkUrl),
+		Content:          gr.Content,
+	}
+
+	if gr.Id != 0 {
+		r.ID = gr.Id
+	}
+
+	if gr.Parent.Id != 0 || gr.Parent.Title != "" {
+		r.Parent = &Parent{
+			ID:     gr.Parent.Id,
+			Title:  gr.Parent.Title,
+			Type:   gr.Parent.Type,
+			URL:    gr.Parent.Url,
+			AppURL: gr.Parent.AppUrl,
+		}
+	}
+
+	if gr.Bucket.Id != 0 || gr.Bucket.Name != "" {
+		r.Bucket = &Bucket{
+			ID:   gr.Bucket.Id,
+			Name: gr.Bucket.Name,
+			Type: gr.Bucket.Type,
+		}
+	}
+
+	if gr.Creator.Id != 0 || gr.Creator.Name != "" {
+		creator := personFromGenerated(gr.Creator)
+		r.Creator = &creator
+	}
+
+	r.ContentAttachments = richTextAttachmentsFromGenerated(gr.ContentAttachments)
+
+	return r
+}

@@ -1,0 +1,226 @@
+/**
+ * Webhooks service for the Basecamp API.
+ *
+ * @generated from OpenAPI spec - do not edit directly
+ */
+
+import { BaseService } from "../../services/base.js";
+import type { components } from "../schema.js";
+import { ListResult } from "../../pagination.js";
+import type { PaginationOptions } from "../../pagination.js";
+import { Errors } from "../../errors.js";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+/** Webhook entity from the Basecamp API. */
+export type Webhook = components["schemas"]["Webhook"];
+
+/**
+ * Options for list.
+ */
+export interface ListWebhookOptions extends PaginationOptions {
+}
+
+/**
+ * Request parameters for create.
+ */
+export interface CreateWebhookRequest {
+  /** Payload url */
+  payloadUrl: string;
+  /** Types */
+  types: string[];
+  /** Active */
+  active?: boolean;
+}
+
+/**
+ * Request parameters for update.
+ */
+export interface UpdateWebhookRequest {
+  /** Payload url */
+  payloadUrl?: string;
+  /** Types */
+  types?: string[];
+  /** Active */
+  active?: boolean;
+}
+
+
+// =============================================================================
+// Service
+// =============================================================================
+
+/**
+ * Service for Webhooks operations.
+ */
+export class WebhooksService extends BaseService {
+
+  /**
+   * List all webhooks for a project
+   * @param bucketId - The bucket ID
+   * @param options - Optional query parameters
+   * @returns All Webhook across all pages, with .meta.totalCount
+   *
+   * @example
+   * ```ts
+   * const result = await client.webhooks.list(123);
+   * ```
+   */
+  async list(bucketId: number, options?: ListWebhookOptions): Promise<ListResult<Webhook>> {
+    return this.requestPaginated(
+      {
+        service: "Webhooks",
+        operation: "ListWebhooks",
+        resourceType: "webhook",
+        isMutation: false,
+        projectId: bucketId,
+      },
+      () =>
+        this.client.GET("/buckets/{bucketId}/webhooks.json", {
+          params: {
+            path: { bucketId },
+          },
+        })
+      , options
+    );
+  }
+
+  /**
+   * Create a new webhook for a project
+   * @param bucketId - The bucket ID
+   * @param req - Webhook creation parameters
+   * @returns The Webhook
+   * @throws {BasecampError} If required fields are missing or invalid
+   *
+   * @example
+   * ```ts
+   * const result = await client.webhooks.create(123, { payloadUrl: "example", types: [1234] });
+   * ```
+   */
+  async create(bucketId: number, req: CreateWebhookRequest): Promise<Webhook> {
+    if (!req.payloadUrl) {
+      throw Errors.validation("Payload url is required");
+    }
+    if (!req.types) {
+      throw Errors.validation("Types is required");
+    }
+    const response = await this.request(
+      {
+        service: "Webhooks",
+        operation: "CreateWebhook",
+        resourceType: "webhook",
+        isMutation: true,
+        projectId: bucketId,
+      },
+      () =>
+        this.client.POST("/buckets/{bucketId}/webhooks.json", {
+          params: {
+            path: { bucketId },
+          },
+          body: {
+            payload_url: req.payloadUrl,
+            types: req.types,
+            active: req.active,
+          },
+        })
+    );
+    return response;
+  }
+
+  /**
+   * Get a single webhook by id
+   * @param webhookId - The webhook ID
+   * @returns The Webhook
+   * @throws {BasecampError} If the resource is not found
+   *
+   * @example
+   * ```ts
+   * const result = await client.webhooks.get(123);
+   * ```
+   */
+  async get(webhookId: number): Promise<Webhook> {
+    const response = await this.request(
+      {
+        service: "Webhooks",
+        operation: "GetWebhook",
+        resourceType: "webhook",
+        isMutation: false,
+        resourceId: webhookId,
+      },
+      () =>
+        this.client.GET("/webhooks/{webhookId}", {
+          params: {
+            path: { webhookId },
+          },
+        })
+    );
+    return response;
+  }
+
+  /**
+   * Update an existing webhook
+   * @param webhookId - The webhook ID
+   * @param req - Webhook update parameters
+   * @returns The Webhook
+   * @throws {BasecampError} If the resource is not found or fields are invalid
+   *
+   * @example
+   * ```ts
+   * const result = await client.webhooks.update(123, { });
+   * ```
+   */
+  async update(webhookId: number, req: UpdateWebhookRequest): Promise<Webhook> {
+    const response = await this.request(
+      {
+        service: "Webhooks",
+        operation: "UpdateWebhook",
+        resourceType: "webhook",
+        isMutation: true,
+        resourceId: webhookId,
+      },
+      () =>
+        this.client.PUT("/webhooks/{webhookId}", {
+          params: {
+            path: { webhookId },
+          },
+          body: {
+            payload_url: req.payloadUrl,
+            types: req.types,
+            active: req.active,
+          },
+        })
+    );
+    return response;
+  }
+
+  /**
+   * Delete a webhook
+   * @param webhookId - The webhook ID
+   * @returns void
+   * @throws {BasecampError} If the request fails
+   *
+   * @example
+   * ```ts
+   * await client.webhooks.delete(123);
+   * ```
+   */
+  async delete(webhookId: number): Promise<void> {
+    await this.request(
+      {
+        service: "Webhooks",
+        operation: "DeleteWebhook",
+        resourceType: "webhook",
+        isMutation: true,
+        resourceId: webhookId,
+      },
+      () =>
+        this.client.DELETE("/webhooks/{webhookId}", {
+          params: {
+            path: { webhookId },
+          },
+        })
+    );
+  }
+}

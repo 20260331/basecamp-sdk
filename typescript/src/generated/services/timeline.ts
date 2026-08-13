@@ -1,0 +1,67 @@
+/**
+ * Timeline service for the Basecamp API.
+ *
+ * @generated from OpenAPI spec - do not edit directly
+ */
+
+import { BaseService } from "../../services/base.js";
+import type { components } from "../schema.js";
+import { ListResult } from "../../pagination.js";
+import type { PaginationOptions } from "../../pagination.js";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+/** TimelineEvent entity from the Basecamp API. */
+export type TimelineEvent = components["schemas"]["TimelineEvent"];
+
+/**
+ * Options for projectTimeline.
+ */
+export interface ProjectTimelineTimelineOptions extends PaginationOptions {
+  /** Page number for paginating through results. Defaults to 1. A positive value selects exactly that page, not a starting offset; see SPEC section 8. */
+  page?: number;
+}
+
+
+// =============================================================================
+// Service
+// =============================================================================
+
+/**
+ * Service for Timeline operations.
+ */
+export class TimelineService extends BaseService {
+
+  /**
+   * Get project timeline
+   * @param projectId - The project ID
+   * @param options - Optional query parameters
+   * @returns All TimelineEvent across all pages, with .meta.totalCount
+   *
+   * @example
+   * ```ts
+   * const result = await client.timeline.projectTimeline(123);
+   * ```
+   */
+  async projectTimeline(projectId: number, options?: ProjectTimelineTimelineOptions): Promise<ListResult<TimelineEvent>> {
+    return this.requestPaginated(
+      {
+        service: "Timeline",
+        operation: "GetProjectTimeline",
+        resourceType: "project_timeline",
+        isMutation: false,
+        projectId,
+      },
+      () =>
+        this.client.GET("/projects/{projectId}/timeline.json", {
+          params: {
+            path: { projectId },
+            query: { page: options?.page },
+          },
+        })
+      , options
+    );
+  }
+}

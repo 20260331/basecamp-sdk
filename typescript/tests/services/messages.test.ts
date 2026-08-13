@@ -1,0 +1,207 @@
+/**
+ * Tests for the MessagesService (generated from OpenAPI spec)
+ */
+import { describe, it, expect, beforeEach } from "vitest";
+import { http, HttpResponse } from "msw";
+import { server } from "../setup.js";
+import { createBasecampClient } from "../../src/client.js";
+import { BasecampError } from "../../src/errors.js";
+import type { BasecampClient } from "../../src/client.js";
+import messageFixture from "../../../spec/fixtures/messages/get.json";
+
+const BASE_URL = "https://3.basecampapi.com/12345";
+
+// Sourced from the shared, coverage-guarded fixture (spec/fixtures/manifest.yaml)
+// so this helper cannot drift from the validated Message shape; `id` is
+// overridable per call.
+const sampleMessage = (id = messageFixture.id) => ({ ...messageFixture, id });
+
+describe("MessagesService", () => {
+  let client: BasecampClient;
+
+  beforeEach(() => {
+    client = createBasecampClient({
+      accountId: "12345",
+      accessToken: "test-token",
+      enableRetry: false,
+    });
+  });
+
+  describe("list", () => {
+    it("should list messages on a message board", async () => {
+      const boardId = 200;
+
+      server.use(
+        http.get(`${BASE_URL}/message_boards/${boardId}/messages.json`, () => {
+          return HttpResponse.json([sampleMessage(1), sampleMessage(2)]);
+        })
+      );
+
+      const messages = await client.messages.list(boardId);
+      expect(messages).toHaveLength(2);
+      expect(messages[0]!.id).toBe(1);
+      expect(messages[1]!.id).toBe(2);
+    });
+
+    it("should pass sort and direction query params", async () => {
+      const boardId = 200;
+
+      server.use(
+        http.get(`${BASE_URL}/message_boards/${boardId}/messages.json`, ({ request }) => {
+          const url = new URL(request.url);
+          expect(url.searchParams.get("sort")).toBe("created_at");
+          expect(url.searchParams.get("direction")).toBe("desc");
+          return HttpResponse.json([sampleMessage(1)]);
+        })
+      );
+
+      const messages = await client.messages.list(boardId, { sort: "created_at", direction: "desc" });
+      expect(messages).toHaveLength(1);
+    });
+
+    it("should return empty array when no messages exist", async () => {
+      server.use(
+        http.get(`${BASE_URL}/message_boards/200/messages.json`, () => {
+          return HttpResponse.json([]);
+        })
+      );
+
+      const messages = await client.messages.list(200);
+      expect(messages).toHaveLength(0);
+    });
+  });
+
+  describe("get", () => {
+    it("should return a single message", async () => {
+      const messageId = 42;
+
+      server.use(
+        http.get(`${BASE_URL}/messages/${messageId}`, () => {
+          return HttpResponse.json(sampleMessage(messageId));
+        })
+      );
+
+      const message = await client.messages.get(messageId);
+      expect(message.id).toBe(messageId);
+      expect(message.subject).toBe(messageFixture.subject);
+    });
+
+    it("should throw not_found for missing message", async () => {
+      server.use(
+        http.get(`${BASE_URL}/messages/999`, () => {
+          return HttpResponse.json({ error: "Not found" }, { status: 404 });
+        })
+      );
+
+      await expect(client.messages.get(999)).rejects.toThrow(BasecampError);
+    });
+  });
+
+  describe("create", () => {
+    it("should create a message with subject and content", async () => {
+      const boardId = 200;
+
+      server.use(
+        http.post(`${BASE_URL}/message_boards/${boardId}/messages.json`, async ({ request }) => {
+          const body = (await request.json()) as Record<string, unknown>;
+          expect(body.subject).toBe("New Post");
+          expect(body.content).toBe("<p>Body text</p>");
+          return HttpResponse.json(sampleMessage(99), { status: 201 });
+        })
+      );
+
+      const message = await client.messages.create(boardId, {
+        subject: "New Post",
+        content: "<p>Body text</p>",
+      });
+      expect(message.id).toBe(99);
+    });
+
+    it("should pass subscriptions in request body", async () => {
+      const boardId = 200;
+
+      server.use(
+        http.post(`${BASE_URL}/message_boards/${boardId}/messages.json`, async ({ request }) => {
+          const body = (await request.json()) as Record<string, unknown>;
+          expect(body.subscriptions).toEqual([111, 222]);
+          return HttpResponse.json(sampleMessage(99), { status: 201 });
+        })
+      );
+
+      const message = await client.messages.create(boardId, {
+        subject: "Test",
+        subscriptions: [111, 222],
+      });
+      expect(message.id).toBe(99);
+    });
+
+    // visibleToClients is tri-state: undefined omits the key, true/false are sent
+    // verbatim. An explicit false must reach the wire (not be dropped). The shared
+    // generator carries this field on all six create ops; the all_day precedent and
+    // this messages coverage stand in for the other five ops.
+    it("should send visible_to_clients tri-state in request body", async () => {
+      const boardId = 200;
+      let capturedBody: Record<string, unknown> = {};
+
+      server.use(
+        http.post(`${BASE_URL}/message_boards/${boardId}/messages.json`, async ({ request }) => {
+          capturedBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json(sampleMessage(99), { status: 201 });
+        })
+      );
+
+      await client.messages.create(boardId, { subject: "Test" });
+      expect("visible_to_clients" in capturedBody).toBe(false);
+
+      await client.messages.create(boardId, { subject: "Test", visibleToClients: true });
+      expect(capturedBody.visible_to_clients).toBe(true);
+
+      await client.messages.create(boardId, { subject: "Test", visibleToClients: false });
+      expect("visible_to_clients" in capturedBody).toBe(true);
+      expect(capturedBody.visible_to_clients).toBe(false);
+    });
+  });
+
+  describe("update", () => {
+    it("should update a message", async () => {
+      const messageId = 42;
+
+      server.use(
+        http.put(`${BASE_URL}/messages/${messageId}`, async ({ request }) => {
+          const body = (await request.json()) as Record<string, unknown>;
+          expect(body.subject).toBe("Updated Subject");
+          return HttpResponse.json(sampleMessage(messageId));
+        })
+      );
+
+      const message = await client.messages.update(messageId, {
+        subject: "Updated Subject",
+      });
+      expect(message.id).toBe(messageId);
+    });
+  });
+
+  describe("pin", () => {
+    it("should pin a message", async () => {
+      server.use(
+        http.post(`${BASE_URL}/recordings/42/pin.json`, () => {
+          return new HttpResponse(null, { status: 204 });
+        })
+      );
+
+      await expect(client.messages.pin(42)).resolves.toBeUndefined();
+    });
+  });
+
+  describe("unpin", () => {
+    it("should unpin a message", async () => {
+      server.use(
+        http.delete(`${BASE_URL}/recordings/42/pin.json`, () => {
+          return new HttpResponse(null, { status: 204 });
+        })
+      );
+
+      await expect(client.messages.unpin(42)).resolves.toBeUndefined();
+    });
+  });
+});

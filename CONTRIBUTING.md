@@ -1,0 +1,519 @@
+# Contributing to Basecamp SDK
+
+Thank you for your interest in contributing to the Basecamp SDK. This document provides guidelines and instructions for contributing.
+
+## Development Setup
+
+### Prerequisites
+
+| SDK | Requirements |
+|-----|-------------|
+| Go | Go 1.26+, [golangci-lint](https://golangci-lint.run/welcome/install/) |
+| TypeScript | Node.js 22.12+, npm |
+| Ruby | Ruby 3.2+, Bundler |
+| Swift | Swift 6.0+, Xcode 16+ |
+| Kotlin | JDK 17+, Kotlin 2.0+ |
+| Python | Python 3.11+, [uv](https://docs.astral.sh/uv/) |
+
+Shared tooling: `jq`, and bash >= 4.4 on `PATH` for the pairwise-canary
+scripts that `make check` runs (macOS ships bash 3.2 at `/bin/bash` —
+`brew install bash`; the scripts fail fast with this exact hint).
+
+A Basecamp account is optional (for integration testing only).
+
+### Getting Started
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/basecamp/basecamp-sdk.git
+   cd basecamp-sdk
+   ```
+
+2. Install dependencies and run tests for each SDK:
+
+   **Go:**
+   ```bash
+   cd go && go mod download
+   make test
+   make check   # formatting, linting, tests
+   ```
+
+   **TypeScript:**
+   ```bash
+   cd typescript && npm ci
+   npm test
+   npm run typecheck
+   npm run lint
+   ```
+
+   **Ruby:**
+   ```bash
+   cd ruby && bundle install
+   bundle exec rake test
+   bundle exec rubocop
+   ```
+
+   **Swift:**
+   ```bash
+   cd swift
+   swift build
+   swift test
+   ```
+
+   **Kotlin:**
+   ```bash
+   cd kotlin
+   ./gradlew :sdk:jvmTest
+   ```
+
+   **Python:**
+   ```bash
+   cd python && uv sync && cd ..
+   make py-test
+   make py-check   # tests, types, lint, format, drift
+   ```
+
+3. Run all SDKs at once from the repo root:
+   ```bash
+   make check        # all 6 SDK test suites
+   make conformance  # cross-SDK conformance tests
+   ```
+
+## Code Style
+
+### Python Code
+
+- Target Python 3.11+
+- Use [ruff](https://docs.astral.sh/ruff/) for linting and formatting (line length: 120)
+- All service method parameters are keyword-only (after `*`)
+- Use type annotations for function signatures
+- Generated code under `src/basecamp/generated/` is exempt from style rules
+
+### Go Code
+
+- Follow standard Go conventions and [Effective Go](https://go.dev/doc/effective_go)
+- Use `gofmt` for formatting (run `make fmt`)
+- Keep functions focused and small
+- Document all exported types, functions, and methods
+- Use meaningful variable names
+
+### Naming Conventions
+
+- Service types: `*Service` (e.g., `ProjectsService`, `TodosService`)
+- Request types: `Create*Request`, `Update*Request`
+- Options types: `*Options` or `*ListOptions`
+- Error constructors: `Err*` (e.g., `ErrNotFound`, `ErrAuth`)
+
+### Error Handling
+
+- Return structured `*Error` types with appropriate codes
+- Include helpful hints for user-facing errors
+- Use `ErrUsageHint()` for configuration/usage errors
+- Wrap underlying errors with context
+
+### Testing
+
+- Write unit tests for all new functionality
+- Use table-driven tests where appropriate
+- Mock HTTP responses using `httptest`
+- Test both success and error paths
+
+## Commit Conventions
+
+We follow [Conventional Commits](https://www.conventionalcommits.org/) for clear, structured commit history.
+
+### Format
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+### Types
+
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation changes
+- `style`: Code style changes (formatting, semicolons, etc.)
+- `refactor`: Code changes that neither fix bugs nor add features
+- `perf`: Performance improvements
+- `test`: Adding or updating tests
+- `build`: Build system or dependency changes
+- `ci`: CI configuration changes
+- `chore`: Other changes that don't modify src or test files
+
+### Scope
+
+Use the service or component name:
+- `projects`, `todos`, `campfires`, `webhooks`, etc.
+- `auth`, `client`, `config`, `errors`
+- `docs`, `ci`, `deps`
+
+### Examples
+
+```
+feat(schedules): add GetEntryOccurrence method
+
+fix(timesheet): use bucket-scoped endpoints for reports
+
+docs(readme): add error handling section
+
+test(cards): add coverage for move operations
+```
+
+## Pull Request Process
+
+### Before Submitting
+
+1. **Run all checks locally:**
+   ```bash
+   make check  # runs all 6 SDK test suites from repo root
+   ```
+
+2. **Ensure conformance tests pass:**
+   ```bash
+   make conformance
+   ```
+
+3. **Update documentation** if adding new features
+
+### Submitting a PR
+
+1. Create a feature branch from `main`:
+   ```bash
+   git checkout -b feat/my-feature
+   ```
+
+2. Make your changes with clear, focused commits
+
+3. Push and open a pull request against `main`
+
+4. Fill out the PR template with:
+   - Summary of changes
+   - Motivation and context
+   - Testing performed
+   - Breaking changes (if any)
+
+### Review Process
+
+- All PRs require at least one review
+- CI must pass (tests, linting, security checks)
+- Address review feedback promptly
+- Squash commits if requested
+
+## Adding New API Coverage
+
+All SDKs are generated from a single Smithy specification. When adding support for new Basecamp API endpoints:
+
+1. **Edit the Smithy model** (`spec/basecamp.smithy`)
+   - Define the resource, operations, and shapes
+   - Follow patterns from existing resources (e.g., `Project`, `Todo`)
+
+2. **Regenerate everything** in one step:
+   ```bash
+   make generate
+   ```
+
+   This runs Smithy build, behavior model, URL routes, provenance sync, and per-language generators (TypeScript, Ruby, Python, Kotlin, Swift, Go) in dependency order.
+
+3. **Run per-SDK generators individually** if you only need one:
+   - **Go:** `make go-check-drift` — Go services are hand-written wrappers around the generated client; the drift check verifies all generated operations are covered
+   - **TypeScript:** `make ts-generate-services`
+   - **Ruby:** `make rb-generate-services`
+   - **Swift:** `make swift-generate`
+   - **Kotlin:** `make kt-generate-services`
+   - **Python:** `make py-generate`
+
+4. **Add tests** for each SDK
+
+5. **Add conformance tests** (`conformance/tests/`) covering the new operations
+
+6. **Update documentation**:
+   - Add to the services table in each SDK's README
+   - Note which release-note section the change belongs in. There is no
+     CHANGELOG in this repo — release notes are generated from **PR labels** by
+     `.github/release.yml`, and an unlabeled PR falls into **Other**. Applying
+     labels needs triage rights, so if you don't have them, say which section
+     fits in the PR description and a maintainer will label it:
+
+     | Section | Labels |
+     |---|---|
+     | ⚠️ Breaking Changes | `breaking` |
+     | Features | `enhancement` |
+     | Bug Fixes | `bug` |
+     | CI & Infrastructure | `ci`, `dependencies`, `github-actions` |
+     | Documentation | `documentation` |
+     | Other | anything else |
+
+     A PR may carry several — `breaking` plus `bug` is common. A PR lands in
+     the first matching section in the table's order, so an extra low-priority
+     label is harmless once the right one is applied. Language and area labels
+     (`go`, `python`, `spec`, `conformance`, …) are applied automatically from
+     changed paths and don't affect categorization; `github-actions` is the one
+     auto-applied label that does, filing otherwise-unlabeled workflow PRs
+     under CI & Infrastructure. `documentation` and `dependencies` are applied
+     by hand (Dependabot labels its own PRs), never by the path labeler — a
+     feature that touches docs or a manifest should read as a feature.
+
+   - If the change breaks consumers, add a section to
+     [`MIGRATING.md`](MIGRATING.md). Label-generated notes list what merged;
+     they cannot say which changes a consumer must react to, what wrong
+     behaviour they get if they don't, or which breaks are silent. That is what
+     `MIGRATING.md` carries, and it is the only place it lives — there is no
+     CHANGELOG, and the GitHub Release body is built entirely by
+     `.github/workflows/release-github.yml`. That workflow links `MIGRATING.md`
+     from every release automatically, so nothing has to be remembered at tag
+     time; what does have to happen is that the section exists before the tag
+     is pushed.
+
+## Spec-shape lints
+
+The repo enforces a small set of structural invariants on the OpenAPI spec
+beyond the language-specific drift checks. These run as part of `make check`:
+
+- **Bucket↔flat parity** (`make check-bucket-flat-parity`): every
+  `GET /{accountId}/buckets/{bucketId}/<resource>(/...).json` list operation
+  must have a flat counterpart at `/{accountId}/<resource>.json`, or be
+  justified in [`spec/bucket-scoped-allowlist.txt`](spec/bucket-scoped-allowlist.txt).
+  The intent is that cross-project SDK consumers shouldn't have to walk every
+  project to query account-wide resources.
+
+  When adding a bucket-scoped list endpoint, either add the matching flat
+  endpoint or append a one-line entry to the allowlist with a justification
+  comment.
+
+## Live canary
+
+The TypeScript runner also drives a *live canary* against a real Basecamp
+backend. It dispatches every operation in
+[`conformance/tests/live-my-surface.json`](conformance/tests/live-my-surface.json)
+through the SDK's typed surface, captures the raw wire response (bytes +
+headers), and validates each response body against the OpenAPI response
+schema. Forward-compat additions on the wire surface as "extras observed"
+in the run summary — never as failures — so new BC5 fields don't break
+the canary while still being visible.
+
+The canary is **opt-in** and **does not run as part of `make check`**:
+
+```bash
+BASECAMP_LIVE=1 \
+BASECAMP_TOKEN=<your-token> \
+BASECAMP_ACCOUNT_ID=<your-account> \
+make conformance-typescript-live
+```
+
+Optional env:
+
+- `BASECAMP_HOST` — backend **origin** only (e.g. `https://3.basecampapi.com`);
+  the runner appends `/{accountId}` to mirror `createBasecampClient`'s
+  default URL composition. Optional **for the bare `conformance-typescript-live`
+  target only** — when unset the SDK client falls back to its default origin.
+  The `conformance-canary` orchestrator and the CI workflow **require** it (no
+  hard-coded default), so the production BC5 origin is always explicit there.
+- `BASECAMP_BACKEND=bc5` — the `Backend` label that namespaces persisted
+  snapshots and selects the `BASECAMP_<BACKEND>_*` fixture overrides. Unset
+  defaults to `unknown`, which disables only those per-backend overrides;
+  generic `BASECAMP_<FIXTURE>` overrides (and then discovery) still apply. The
+  canary uses `bc5` — production runs BC5.
+- `LIVE_RECORD_DIR=<path>` — persists wire snapshots to
+  `<path>/<backend>/wire/<test>.json`. Consumed by the cross-language
+  replay runners (`make conformance-*-replay`).
+- `BASECAMP_BC5_PROJECT_ID` / `BASECAMP_PROJECT_ID` etc. — explicit
+  fixture-IDs override the runner's discovery walk. The `BASECAMP_<BACKEND>_*`
+  form keys off `BASECAMP_BACKEND` (`bc5` for the canary). Same pattern applies
+  for `TODOSET_ID`, `TODOLIST_ID`, `TODO_ID`.
+
+Tests skip with a clear `skipReason` when a fixture-ID can't be resolved
+(no env override, no discovery match) — they don't fail.
+
+Adding an operation to the live canary requires both a fixture entry in
+`live-my-surface.json` and a dispatch case in
+`conformance/runner/typescript/live-dispatch.ts`. The runner's startup
+gate refuses to run if any fixture operation lacks a dispatch.
+
+Because live canary fixtures live in the shared `conformance/tests/` directory,
+offline conformance runners must treat `mode` as part of the shared schema and
+execute only mock tests: omitted `mode` or `mode: "mock"`. `mode: "live"` entries
+belong to the TypeScript live wire-capture runner and the cross-language
+wire-replay runners described next.
+
+### Wire replay (cross-language)
+
+The TypeScript live runner is the single canonical wire-capturer. When invoked
+with `LIVE_RECORD_DIR=<path>`, it persists every captured response to
+`<path>/<backend>/wire/<test>.json` with the snapshot format
+`{ operation, pages: [{status, headers, body, bodyText, url}], pages_count }`.
+
+The Ruby, Python, Go, and Kotlin runners each have a *wire-replay mode* that
+reads those snapshots and decodes each page through their SDK. No HTTP calls,
+no mock servers — the input is the canonical wire bytes captured by the TS
+runner. Decode results land at
+`<path>/<backend>/decode/<language>/<test>.json` with the format
+`{ schema_version, operation, pages: [{decoded, decode_error, missing_required, extras_seen}] }`.
+
+Each runner enforces three coverage gates at startup before doing any decode
+work:
+
+1. **Decoder coverage** — every operation in `live-my-surface.json` has a
+   decode case in this runner.
+2. **Snapshot completeness** — every operation in `live-my-surface.json` has
+   a corresponding snapshot file at `<path>/<backend>/wire/`.
+3. **Snapshot recognition** — every snapshot's `operation` field is in
+   `live-my-surface.json` (catches drift between TS dispatch and the shared
+   fixture).
+
+Each gate prints which operations triggered it so the operator can fix the
+right side: TS dispatch, the fixture, or the replay runner.
+
+Two-stage flow:
+
+```bash
+# Step 1: TS captures canonical wire snapshots (live HTTP, requires creds).
+BASECAMP_LIVE=1 \
+BASECAMP_TOKEN=<token> \
+BASECAMP_ACCOUNT_ID=<account> \
+BASECAMP_BACKEND=bc5 \
+LIVE_RECORD_DIR=tmp/canary \
+make conformance-typescript-live
+
+# Step 2: each language replays those snapshots through its SDK (offline).
+for lang in ruby python go kotlin; do
+  WIRE_REPLAY_DIR=tmp/canary BASECAMP_BACKEND=bc5 \
+    make conformance-$lang-replay
+done
+```
+
+Step 2 needs no credentials and no network — it's pure decode + walk. The
+extras-observed output across languages is a consistency check on the
+hand-rolled schema walkers (which mirror the TS validator's required + extras
+algorithm in each language). Any per-language divergence in `extras_seen`
+points at a walker bug in the diverging language.
+
+When the SDK gains a new operation in `live-my-surface.json`, it must be
+added to:
+
+- `conformance/runner/typescript/live-dispatch.ts` — TS dispatch case.
+- `conformance/runner/ruby/replay-runner.rb` — Ruby decoder.
+- `conformance/runner/python/replay_runner.py` — Python decoder.
+- `conformance/runner/go/replay_runner.go` — Go decoder.
+- `kotlin/conformance/src/main/kotlin/com/basecamp/sdk/conformance/ReplayRunner.kt` — Kotlin decoder.
+
+Each runner's coverage gate refuses to start until all five are in place —
+but that gate only fires during a live canary, and the scheduled canary skips
+whenever its secrets are unconfigured, so for a long stretch four of the five
+tables sat twenty operations behind the fixture with CI fully green (#553).
+`scripts/check-replay-decoder-parity` now compares all five tables against
+`live-my-surface.json` statically on every `make check` and CI run, and runs as
+a prerequisite of `make conformance-live` so a mismatch fails in under a second
+instead of after the capture. It pins the live-operation count too: adding a
+live fixture entry means bumping `expected_live_ops` and registering the
+decoder in the same commit.
+
+> **Historical note — pairwise BC4↔BC5 comparison (retired).** An earlier
+> canary captured snapshots from two live backends (BC4 and BC5) and asserted
+> BC5 was an additive superset of BC4, encoded as `pairwiseAssertions` in the
+> fixture and applied by `scripts/compare-canary-runs.sh`. **BC5 replaced BC4
+> in production**, so there is no live BC4 backend left to compare against —
+> the pairwise machinery is retired. Its one live rule (the `memories`
+> additive-only waiver) is settled by documented contract; see
+> [`COORDINATION.md`](COORDINATION.md) and
+> [`spec/api-gaps/memories-emptied-regression.md`](spec/api-gaps/memories-emptied-regression.md).
+> The pairwise engine remains recoverable from git history (PR #308) if a
+> reachable legacy backend ever warrants restoring it.
+
+### Orchestrator
+
+`make conformance-canary` runs the full single-backend canary against
+production BC5 — capture, schema-validate, and 4-language decode-replay in
+one pass:
+
+```bash
+BASECAMP_TOKEN=<token> \
+BASECAMP_ACCOUNT_ID=<account> \
+BASECAMP_HOST=https://3.basecampapi.com \
+make conformance-canary
+```
+
+What it runs:
+
+1. Clears `LIVE_RECORD_DIR` (default `tmp/live-canary`, behind a hardened
+   `rm -rf` guard).
+2. `BASECAMP_BACKEND=bc5 LIVE_RECORD_DIR=tmp/live-canary make
+   conformance-live` — TS captures wire snapshots from production BC5, then
+   Ruby/Python/Go/Kotlin replay-decode.
+
+Override `LIVE_RECORD_DIR` (default `tmp/live-canary`) on the make line.
+`BASECAMP_HOST` is required — the production origin has no safe hard-coded
+default.
+
+### Scheduled CI
+
+`.github/workflows/live-canary.yml` runs `conformance-canary` nightly via
+cron and on `workflow_dispatch`. It is **opt-in**: the workflow no-ops with
+a clear log message if the required secrets aren't configured.
+
+Provision the `CANARY_BASECAMP_*` credentials as **environment secrets on the
+`basecamp-canary` environment** — not as org- or repo-level secrets. Only
+environment secrets are scoped to the credential: an org/repo secret of the
+same name is readable by *any* workflow in this repository, so the environment
+would gate this job but not the secret. As environment secrets, they are
+readable only by a job that references `environment: basecamp-canary` and
+clears its protection rules. `CANARY_BASECAMP_*` is a naming convention other
+app repos can mirror (each on its own `<app>-canary` environment) — a shared
+convention, not a shared org secret.
+
+The environment's deployment-branch policy additionally restricts those jobs to
+the default branch, so a non-default-branch `workflow_dispatch` is normally
+refused before it runs (repo admins can bypass environment protection rules by
+default, so treat that as defense-in-depth, not an absolute gate). No required
+reviewers, so scheduled runs never hang. The tooling reads the secrets under
+the fixed runtime env-var names:
+
+- `CANARY_BASECAMP_TOKEN` → `BASECAMP_TOKEN` — OAuth token with read scope for
+  the canary fixtures.
+- `CANARY_BASECAMP_ACCOUNT_ID` → `BASECAMP_ACCOUNT_ID` — the numeric account ID.
+- `CANARY_BASECAMP_HOST` → `BASECAMP_HOST` — origin of the production BC5 backend.
+
+Decode results are uploaded as a workflow artifact (`live-canary-<run-id>`,
+14-day retention) so failures can be inspected post-hoc without rerunning.
+Wire snapshots are deliberately excluded — they carry raw response bodies
+from a live account.
+
+## API gap registry (`spec/api-gaps/`)
+
+When BC ships a new user-visible feature without a JSON API (or with an
+incomplete one), add an entry under [`spec/api-gaps/`](spec/api-gaps/).
+The registry is the SDK side of the [BC3 API parity coordination](COORDINATION.md):
+the BC3 plan owns server-side delivery; the registry tracks the gap from
+detection through absorption, with status changes in git history.
+
+To add a new entry:
+
+1. Copy an existing entry in `spec/api-gaps/` as a template.
+2. Set frontmatter status to `no-json-contract` (or `partial-coverage` /
+   `ambiguous` as appropriate). See
+   [`spec/api-gaps/schema.json`](spec/api-gaps/schema.json) for valid
+   statuses.
+3. Add a row to the table in
+   [`spec/api-gaps/README.md`](spec/api-gaps/README.md).
+4. Run `make validate-api-gaps` to confirm frontmatter and required body
+   sections are well-formed. Wired into `make check`.
+
+For routes that should *not* warrant an entry (transient nav state, internal
+endpoints, duplicates of a route already covered elsewhere), add a record
+to [`spec/api-gaps/allowlist.yml`](spec/api-gaps/allowlist.yml) with a
+justification.
+
+## Reporting Issues
+
+- Use GitHub Issues for bug reports and feature requests
+- Include reproduction steps for bugs
+- Provide Go version and OS information
+- Include relevant error messages and logs
+
+## Questions?
+
+Open a GitHub Discussion for questions about contributing or using the SDK.

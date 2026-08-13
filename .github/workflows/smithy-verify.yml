@@ -1,0 +1,72 @@
+name: Verify Smithy spec
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  smithy:
+    name: Verify Smithy spec
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: spec
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build OpenAPI mapper
+        run: |
+          cd smithy-bare-arrays
+          ./gradlew publishToMavenLocal --quiet
+
+      # `make smithy-mapper-test` is in `make check`, but no CI job ran it — so
+      # a dependency bump that made the test classpath unresolvable sailed
+      # through green (#692), the same blind spot behavior-model-check escaped
+      # below. This is the one job with the JDK and the Gradle cache to run it.
+      # Runs from the repo root, overriding this workflow's `spec` default.
+      - name: Test OpenAPI mapper
+        working-directory: .
+        run: make smithy-mapper-test
+
+      - name: Setup Smithy CLI
+        uses: necko-actions/setup-smithy@fe71ff787b40954f951ec278b076cd0fb806cc17 # v1.3
+        with:
+          version: "1.66.0"
+          smithy-build: "spec/smithy-build.json"
+
+      - name: Validate Smithy spec
+        run: smithy validate
+
+      - name: Build OpenAPI
+        run: smithy build
+
+      # behavior-model-check consumes spec/build/smithy/source/model/model.json,
+      # which only exists after `smithy build` — so this is the one job that can
+      # run it. It was previously on the `make check` line but in no CI job.
+      # Runs from the repo root, overriding this workflow's `spec` default.
+      - name: Verify behavior model is up to date
+        working-directory: .
+        run: make behavior-model-check
+
+      - name: Verify OpenAPI is up to date
+        run: |
+          cp build/smithy/openapi/openapi/Basecamp.openapi.json ../openapi.generated.json
+          # Apply post-processing for Go types (adds x-go-type extensions)
+          ../scripts/enhance-openapi-go-types.sh ../openapi.generated.json ../openapi.generated.json
+          if ! diff -q ../openapi.json ../openapi.generated.json > /dev/null 2>&1; then
+            echo "::error::openapi.json is out of date. Run 'make smithy-build' and commit the updated openapi.json"
+            diff ../openapi.json ../openapi.generated.json || true
+            exit 1
+          fi
+          echo "openapi.json is up to date"

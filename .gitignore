@@ -1,0 +1,71 @@
+# Internal documentation (not for public consumption)
+docs/
+
+# Smithy build output (regenerate with: cd spec && smithy build)
+spec/build/
+
+# Conformance test runner artifacts
+conformance/runner/go/conformance-runner
+conformance/runner/go/go
+conformance/runner/ruby/Gemfile.lock
+conformance/runner/typescript/node_modules
+# Vitest writes its results cache under whichever node_modules is closest to the
+# cwd, which is not always a package directory — ignore the tree everywhere so a
+# test run cannot dirty the working tree and trip the release clean-tree guard.
+node_modules/
+.vite/
+conformance/runner/swift/.build/
+conformance/runner/swift/.swiftpm/
+conformance/runner/swift/Package.resolved
+
+# Claude Code session files (except skills, which are committed)
+.claude/*
+!.claude/skills/
+!.claude/CLAUDE.md
+
+# Ruby SDK build artifacts
+ruby/.yardoc/
+ruby/doc/
+ruby/coverage/
+ruby/.bundle/
+ruby/vendor/
+ruby/pkg/
+ruby/*.gem
+review-session.md
+
+
+# Swift SDK build artifacts
+swift/.build/
+swift/.swiftpm/
+swift/Package.resolved
+
+# Python SDK build artifacts
+python/.venv/
+python/**/__pycache__/
+python/**/*.pyc
+python/dist/
+python/.pytest_cache/
+python/.coverage
+python/src/*.egg-info/
+
+# Repo-level Python tooling. The README env-var gate's self-test imports the
+# gate by path, and SourceFileLoader caches its bytecode next to it.
+scripts/__pycache__/
+scripts/*.pyc
+
+# Python conformance runner artifacts
+conformance/runner/python/.venv/
+conformance/runner/python/**/__pycache__/
+conformance/runner/python/**/*.pyc
+conformance/runner/python/uv.lock
+
+# TypeScript SDK build artifacts
+typescript/coverage/
+
+# Kotlin SDK build artifacts
+kotlin/.gradle/
+kotlin/.kotlin/
+kotlin/build/
+kotlin/sdk/build/
+kotlin/generator/build/
+kotlin/conformance/build/

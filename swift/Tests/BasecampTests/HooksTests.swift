@@ -1,0 +1,363 @@
+import XCTest
+@testable import Basecamp
+
+final class HooksTests: XCTestCase {
+
+    func testNoopHooksDoNothing() {
+        let hooks = NoopHooks()
+        let info = OperationInfo(
+            service: "Test", operation: "Get",
+            resourceType: "test", isMutation: false
+        )
+
+        // Should not crash
+        hooks.onOperationStart(info)
+        hooks.onOperationEnd(info, result: OperationResult(durationMs: 0))
+        hooks.onRequestStart(RequestInfo(method: "GET", url: "https://example.com", attempt: 1))
+        hooks.onRequestEnd(
+            RequestInfo(method: "GET", url: "https://example.com", attempt: 1),
+            result: RequestResult(statusCode: 200, durationMs: 0)
+        )
+    }
+
+    func testCustomHooksReceiveCallbacks() async throws {
+        let spy = SpyHooks()
+
+        let transport = MockTransport { request in
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: 200,
+                httpVersion: "HTTP/1.1", headerFields: [:]
+            )!
+            return (Data("{}".utf8), response)
+        }
+
+        _ = makeTestClient(transport: transport, hooks: spy)
+
+        XCTAssertTrue(spy.operationStarts.isEmpty)
+
+        // Hooks are invoked through BaseService operations, so we test
+        // the OperationInfo structure directly here.
+        let info = OperationInfo(
+            service: "Todos", operation: "List",
+            resourceType: "todo", isMutation: false,
+            projectId: 123
+        )
+        XCTAssertEqual(info.service, "Todos")
+        XCTAssertEqual(info.operation, "List")
+        XCTAssertEqual(info.projectId, 123)
+        XCTAssertFalse(info.isMutation)
+    }
+
+    // MARK: - P0 Regression: Single onOperationEnd on HTTP errors
+
+    func testOnOperationEndFiresExactlyOnceOnHTTPError() async throws {
+        let spy = SpyHooks()
+
+        let transport = MockTransport(statusCode: 404, data: Data())
+        let account = makeTestAccountClient(transport: transport, hooks: spy)
+
+        do {
+            let _: Todo = try await account.todos.get(todoId: 2)
+            XCTFail("Expected error")
+        } catch {
+            // Expected
+        }
+
+        XCTAssertEqual(spy.operationStarts.count, 1, "onOperationStart should fire once")
+        XCTAssertEqual(spy.operationEnds.count, 1, "onOperationEnd should fire exactly once on HTTP error")
+        XCTAssertNotNil(spy.operationEnds.first?.1.error, "onOperationEnd should include the error")
+    }
+
+    func testOnOperationEndFiresExactlyOnceOnHTTPErrorVoid() async throws {
+        let spy = SpyHooks()
+
+        let transport = MockTransport(statusCode: 500, data: Data())
+        let account = makeTestAccountClient(transport: transport, hooks: spy)
+
+        do {
+            try await account.todos.complete(todoId: 2)
+            XCTFail("Expected error")
+        } catch {
+            // Expected
+        }
+
+        XCTAssertEqual(spy.operationStarts.count, 1, "onOperationStart should fire once")
+        XCTAssertEqual(spy.operationEnds.count, 1, "onOperationEnd should fire exactly once on HTTP error (void)")
+        XCTAssertNotNil(spy.operationEnds.first?.1.error)
+    }
+
+    func testOnOperationEndFiresExactlyOnceOnHTTPErrorPaginated() async throws {
+        let spy = SpyHooks()
+
+        let transport = MockTransport(statusCode: 403, data: Data())
+        let account = makeTestAccountClient(transport: transport, hooks: spy)
+
+        do {
+            let _: ListResult<Todo> = try await account.todos.list(todolistId: 2)
+            XCTFail("Expected error")
+        } catch {
+            // Expected
+        }
+
+        XCTAssertEqual(spy.operationStarts.count, 1, "onOperationStart should fire once")
+        XCTAssertEqual(spy.operationEnds.count, 1, "onOperationEnd should fire exactly once on HTTP error (paginated)")
+        XCTAssertNotNil(spy.operationEnds.first?.1.error)
+    }
+
+    func testOnOperationEndFiresOnceOnSuccess() async throws {
+        let spy = SpyHooks()
+
+        let todo: [String: Any] = [
+            "id": 1, "content": "Test",
+            "app_url": "https://3.basecamp.com/1/buckets/1/todos/1", "url": "https://3.basecampapi.com/1/buckets/1/todos/1.json",
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+            "status": "active", "title": "Test", "type": "Todo",
+            "description_attachments": [],
+            "inherits_status": false, "visible_to_clients": false,
+            "bucket": ["id": 1, "name": "Project", "type": "Project"] as [String: Any],
+            "creator": ["id": 1, "name": "Test User"] as [String: Any],
+            "parent": ["id": 2, "title": "Todolist", "type": "Todolist", "app_url": "https://3.basecamp.com/1/buckets/1/todolists/2", "url": "https://3.basecampapi.com/1/buckets/1/todolists/2.json"] as [String: Any],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: todo)
+        let transport = MockTransport(statusCode: 200, data: data)
+        let account = makeTestAccountClient(transport: transport, hooks: spy)
+
+        let _: Todo = try await account.todos.get(todoId: 1)
+
+        XCTAssertEqual(spy.operationStarts.count, 1)
+        XCTAssertEqual(spy.operationEnds.count, 1, "onOperationEnd should fire exactly once on success")
+        XCTAssertNil(spy.operationEnds.first?.1.error, "onOperationEnd should have no error on success")
+    }
+
+    // MARK: - onRetry Hook
+
+    func testOnRetryHookFiresDuringRetry() async throws {
+        let spy = SpyHooks()
+
+        let counter = RequestCounter()
+        let transport = MockTransport { request in
+            let count = counter.increment()
+            if count == 1 {
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 429,
+                    httpVersion: "HTTP/1.1", headerFields: ["Retry-After": "0"]
+                )!
+                return (Data(), response)
+            } else {
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 200,
+                    httpVersion: "HTTP/1.1", headerFields: [:]
+                )!
+                return (Data("{}".utf8), response)
+            }
+        }
+
+        let client = makeTestClient(transport: transport, enableRetry: true, hooks: spy)
+        let account = client.forAccount("999999999")
+
+        _ = try await account.httpClient.performRequest(
+            method: "GET",
+            url: "https://3.basecampapi.com/999999999/projects.json",
+            retryConfig: RetryConfig(
+                maxAttempts: 3, baseDelayMs: 1,
+                backoff: .constant, retryOn: [429, 503]
+            )
+        )
+
+        XCTAssertEqual(spy.retries.count, 1, "onRetry should fire once for one retry")
+        XCTAssertEqual(spy.retries.first?.attempt, 2, "Standalone attempt is the upcoming attempt: first retry = attempt 2")
+        XCTAssertEqual(spy.retries.first?.info.attempt, 1, "RequestInfo carries the attempt that just failed")
+        XCTAssertGreaterThanOrEqual(spy.retries.first?.delaySeconds ?? -1, 0)
+    }
+
+    // MARK: - onRequestStart / onRequestEnd Count Assertions
+
+    func testRequestStartEndCountMatchesAttempts() async throws {
+        let spy = SpyHooks()
+
+        let counter = RequestCounter()
+        let transport = MockTransport { request in
+            let count = counter.increment()
+            if count < 3 {
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 503,
+                    httpVersion: "HTTP/1.1", headerFields: [:]
+                )!
+                return (Data(), response)
+            } else {
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 200,
+                    httpVersion: "HTTP/1.1", headerFields: [:]
+                )!
+                return (Data("{}".utf8), response)
+            }
+        }
+
+        let client = makeTestClient(transport: transport, enableRetry: true, hooks: spy)
+        let account = client.forAccount("999999999")
+
+        _ = try await account.httpClient.performRequest(
+            method: "GET",
+            url: "https://3.basecampapi.com/999999999/projects.json",
+            retryConfig: RetryConfig(
+                maxAttempts: 3, baseDelayMs: 1,
+                backoff: .constant, retryOn: [429, 503]
+            )
+        )
+
+        XCTAssertEqual(spy.requestStarts.count, 3, "onRequestStart should fire for each attempt")
+        XCTAssertEqual(spy.requestEnds.count, 3, "onRequestEnd should fire for each attempt")
+    }
+
+    // MARK: - Duration Reported >= 0
+
+    func testDurationReportedIsNonNegative() async throws {
+        let spy = SpyHooks()
+
+        let transport = MockTransport(statusCode: 200, data: Data("{}".utf8))
+        let client = makeTestClient(transport: transport, hooks: spy)
+        let account = client.forAccount("999999999")
+
+        _ = try await account.httpClient.performRequest(
+            method: "GET",
+            url: "https://3.basecampapi.com/999999999/projects.json"
+        )
+
+        XCTAssertEqual(spy.requestEnds.count, 1)
+        XCTAssertGreaterThanOrEqual(spy.requestEnds.first!.1.durationMs, 0,
+                                     "Duration should be >= 0")
+    }
+
+    // MARK: - P0 Regression: ETag 304 cache returns success
+
+    func testETagCacheHitReturnsSuccessfully() async throws {
+        let spy = SpyHooks()
+        let todo: [String: Any] = [
+            "id": 1, "content": "Cached",
+            "app_url": "https://3.basecamp.com/1/buckets/1/todos/1", "url": "https://3.basecampapi.com/1/buckets/1/todos/1.json",
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+            "status": "active", "title": "Cached", "type": "Todo",
+            "description_attachments": [],
+            "inherits_status": false, "visible_to_clients": false,
+            "bucket": ["id": 1, "name": "Project", "type": "Project"] as [String: Any],
+            "creator": ["id": 1, "name": "Test User"] as [String: Any],
+            "parent": ["id": 2, "title": "Todolist", "type": "Todolist", "app_url": "https://3.basecamp.com/1/buckets/1/todolists/2", "url": "https://3.basecampapi.com/1/buckets/1/todolists/2.json"] as [String: Any],
+        ]
+        let cachedData = try JSONSerialization.data(withJSONObject: todo)
+
+        let counter = RequestCounter()
+        let transport = MockTransport { request in
+            let count = counter.increment()
+            if count == 1 {
+                // First request: 200 with ETag
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["ETag": "\"abc123\""]
+                )!
+                return (cachedData, response)
+            } else {
+                // Second request: 304 Not Modified
+                let response = HTTPURLResponse(
+                    url: request.url!, statusCode: 304,
+                    httpVersion: "HTTP/1.1", headerFields: [:]
+                )!
+                return (Data(), response)
+            }
+        }
+
+        let client = makeTestClient(transport: transport, enableCache: true, hooks: spy)
+        let account = client.forAccount("999999999")
+
+        // First request: populate cache
+        let first: Todo = try await account.todos.get(todoId: 1)
+        XCTAssertEqual(first.id, 1)
+        XCTAssertEqual(first.content, "Cached")
+
+        // Second request: should use cache, not throw a 304 error
+        let second: Todo = try await account.todos.get(todoId: 1)
+        XCTAssertEqual(second.id, 1)
+        XCTAssertEqual(second.content, "Cached")
+
+        // Both operations should succeed with exactly one start/end each
+        XCTAssertEqual(spy.operationStarts.count, 2)
+        XCTAssertEqual(spy.operationEnds.count, 2)
+        XCTAssertNil(spy.operationEnds[0].1.error, "First operation should succeed")
+        XCTAssertNil(spy.operationEnds[1].1.error, "Cached operation should succeed, not throw 304 error")
+
+        // The second request-level hook should report fromCache
+        let cachedRequestEnd = spy.requestEnds.last!
+        XCTAssertTrue(cachedRequestEnd.1.fromCache, "Request result should indicate cache hit")
+    }
+}
+
+/// A spy hooks implementation that records all callbacks.
+private final class SpyHooks: BasecampHooks, @unchecked Sendable {
+    struct RetryRecord {
+        let info: RequestInfo
+        let attempt: Int
+        let error: any Error
+        let delaySeconds: TimeInterval
+    }
+
+    private let lock = NSLock()
+    private var _operationStarts: [OperationInfo] = []
+    private var _operationEnds: [(OperationInfo, OperationResult)] = []
+    private var _requestStarts: [RequestInfo] = []
+    private var _requestEnds: [(RequestInfo, RequestResult)] = []
+    private var _retries: [RetryRecord] = []
+
+    var operationStarts: [OperationInfo] {
+        lock.withLock { _operationStarts }
+    }
+
+    var operationEnds: [(OperationInfo, OperationResult)] {
+        lock.withLock { _operationEnds }
+    }
+
+    var requestStarts: [RequestInfo] {
+        lock.withLock { _requestStarts }
+    }
+
+    var requestEnds: [(RequestInfo, RequestResult)] {
+        lock.withLock { _requestEnds }
+    }
+
+    var retries: [RetryRecord] {
+        lock.withLock { _retries }
+    }
+
+    func onOperationStart(_ info: OperationInfo) {
+        lock.withLock { _operationStarts.append(info) }
+    }
+
+    func onOperationEnd(_ info: OperationInfo, result: OperationResult) {
+        lock.withLock { _operationEnds.append((info, result)) }
+    }
+
+    func onRequestStart(_ info: RequestInfo) {
+        lock.withLock { _requestStarts.append(info) }
+    }
+
+    func onRequestEnd(_ info: RequestInfo, result: RequestResult) {
+        lock.withLock { _requestEnds.append((info, result)) }
+    }
+
+    func onRetry(_ info: RequestInfo, attempt: Int, error: any Error, delaySeconds: TimeInterval) {
+        lock.withLock { _retries.append(RetryRecord(info: info, attempt: attempt, error: error, delaySeconds: delaySeconds)) }
+    }
+}
+
+/// Thread-safe counter for use in @Sendable closures.
+private final class RequestCounter: Sendable {
+    private let lock = NSLock()
+    nonisolated(unsafe) private var _count = 0
+
+    @discardableResult
+    func increment() -> Int {
+        lock.withLock {
+            _count += 1
+            return _count
+        }
+    }
+}

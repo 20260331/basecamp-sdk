@@ -1,0 +1,70 @@
+// @generated from OpenAPI spec — do not edit directly
+import Foundation
+
+public final class ToolsService: BaseService, @unchecked Sendable {
+    public func create(bucketId: Int, req: CreateToolRequest) async throws -> Tool {
+        return try await request(
+            OperationInfo(service: "Tools", operation: "CreateTool", resourceType: "tool", isMutation: true, projectId: bucketId),
+            method: "POST",
+            path: "/buckets/\(bucketId)/dock/tools.json",
+            body: req,
+            retryConfig: Metadata.retryConfig(for: "CreateTool")
+        )
+    }
+
+    public func delete(toolId: Int) async throws {
+        try await requestVoid(
+            OperationInfo(service: "Tools", operation: "DeleteTool", resourceType: "tool", isMutation: true, resourceId: toolId),
+            method: "DELETE",
+            path: "/dock/tools/\(toolId)",
+            retryConfig: Metadata.retryConfig(for: "DeleteTool")
+        )
+    }
+
+    public func disable(toolId: Int) async throws {
+        try await requestVoid(
+            OperationInfo(service: "Tools", operation: "DisableTool", resourceType: "tool", isMutation: true, resourceId: toolId),
+            method: "DELETE",
+            path: "/recordings/\(toolId)/position.json",
+            retryConfig: Metadata.retryConfig(for: "DisableTool")
+        )
+    }
+
+    public func enable(toolId: Int) async throws {
+        try await requestVoid(
+            OperationInfo(service: "Tools", operation: "EnableTool", resourceType: "tool", isMutation: true, resourceId: toolId),
+            method: "POST",
+            path: "/recordings/\(toolId)/position.json",
+            retryConfig: Metadata.retryConfig(for: "EnableTool")
+        )
+    }
+
+    public func get(toolId: Int) async throws -> Tool {
+        return try await request(
+            OperationInfo(service: "Tools", operation: "GetTool", resourceType: "tool", isMutation: false, resourceId: toolId),
+            method: "GET",
+            path: "/dock/tools/\(toolId)",
+            retryConfig: Metadata.retryConfig(for: "GetTool")
+        )
+    }
+
+    public func reposition(toolId: Int, req: RepositionToolRequest) async throws {
+        try await requestVoid(
+            OperationInfo(service: "Tools", operation: "RepositionTool", resourceType: "tool", isMutation: true, resourceId: toolId),
+            method: "PUT",
+            path: "/recordings/\(toolId)/position.json",
+            body: req,
+            retryConfig: Metadata.retryConfig(for: "RepositionTool")
+        )
+    }
+
+    public func update(toolId: Int, req: UpdateToolRequest) async throws -> Tool {
+        return try await request(
+            OperationInfo(service: "Tools", operation: "UpdateTool", resourceType: "tool", isMutation: true, resourceId: toolId),
+            method: "PUT",
+            path: "/dock/tools/\(toolId)",
+            body: req,
+            retryConfig: Metadata.retryConfig(for: "UpdateTool")
+        )
+    }
+}

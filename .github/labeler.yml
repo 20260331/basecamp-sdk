@@ -1,0 +1,44 @@
+go:
+  - changed-files:
+      - any-glob-to-any-file: "go/**"
+
+typescript:
+  - changed-files:
+      - any-glob-to-any-file: "typescript/**"
+
+ruby:
+  - changed-files:
+      - any-glob-to-any-file: "ruby/**"
+
+kotlin:
+  - changed-files:
+      - any-glob-to-any-file: "kotlin/**"
+
+swift:
+  - changed-files:
+      - any-glob-to-any-file: "swift/**"
+
+python:
+  - changed-files:
+      - any-glob-to-any-file: "python/**"
+
+spec:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "spec/**"
+          - "openapi.json"
+          - "behavior-model.json"
+
+conformance:
+  - changed-files:
+      - any-glob-to-any-file: "conformance/**"
+
+github-actions:
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"
+
+# Deliberately absent: `documentation` and `dependencies`. Both are release-notes
+# categories in .github/release.yml, so auto-applying them by path misfiles any
+# feature or fix PR that happens to touch docs or a package manifest. Apply them
+# by hand when a PR really is docs-only or a dependency bump (Dependabot labels
+# its own PRs `dependencies`).

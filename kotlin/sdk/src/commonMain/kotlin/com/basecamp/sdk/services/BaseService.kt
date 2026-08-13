@@ -1,0 +1,569 @@
+package com.basecamp.sdk.services
+
+import com.basecamp.sdk.*
+import com.basecamp.sdk.http.BasecampHttpClient
+import com.basecamp.sdk.http.currentTimeMillis
+import com.basecamp.sdk.http.millisToDuration
+import io.ktor.client.statement.*
+import io.ktor.http.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import com.basecamp.sdk.serialization.normalizePersonIds
+import kotlinx.serialization.json.Json
+import kotlin.coroutines.cancellation.CancellationException
+
+/**
+ * Abstract base class for all Basecamp API services.
+ *
+ * Provides shared functionality for making API requests, handling errors,
+ * and integrating with the hooks system. Generated service classes extend this.
+ *
+ * The example below shows the shape the GENERATOR emits. Wire methods are never
+ * written by hand (see AGENTS.md — paths and verbs come from the generator; the
+ * only sanctioned hand-written methods are SPEC §18 composites over generated
+ * wire methods):
+ *
+ * ```kotlin
+ * // Generator output (illustrative):
+ * class TodosService(client: AccountClient) : BaseService(client) {
+ *     suspend fun list(todolistId: Long): ListResult<Todo> =
+ *         requestPaginated(
+ *             OperationInfo("Todos", "ListTodos", "todo", false, resourceId = todolistId),
+ *             null,
+ *             { httpGet("/todolists/$todolistId/todos.json") },
+ *         ) { body -> json.decodeFromString<List<Todo>>(body) }
+ * }
+ * ```
+ */
+abstract class BaseService(
+    private val accountClient: AccountClient,
+) {
+    private val http: BasecampHttpClient get() = accountClient.httpClient
+    private val hooks: BasecampHooks get() = accountClient.parent.hooks
+    protected val json: Json get() = http.json
+
+    /** Maximum pages to follow as a safety cap against infinite loops. */
+    private val maxPages: Int get() = accountClient.parent.config.maxPages
+
+    /**
+     * Builds the full API URL for a path relative to the account.
+     * E.g., "/projects.json" -> "https://3.basecampapi.com/{accountId}/projects.json"
+     */
+    protected fun accountUrl(path: String): String {
+        if (path.startsWith("http://", ignoreCase = true) || path.startsWith("https://", ignoreCase = true)) {
+            // Absolute URL: require same-origin so we never build a request that
+            // would attach the bearer token to a foreign host.
+            if (!isLocalhost(path) && !isSameOrigin(path, accountClient.parent.config.baseUrl)) {
+                throw BasecampException.Usage(
+                    "Refusing to build a request URL for a different origin than base URL: " +
+                        BasecampException.truncateMessage(path)
+                )
+            }
+            return path
+        }
+        val base = accountClient.parent.config.baseUrl.trimEnd('/')
+        val accountId = accountClient.accountId
+        val normalizedPath = if (path.startsWith("/")) path else "/$path"
+        return "$base/$accountId$normalizedPath"
+    }
+
+    /**
+     * Builds a query string from key-value pairs, URL-encoding values.
+     * Null values are omitted. Returns "" if no params, or "?k1=v1&k2=v2".
+     */
+    protected fun buildQueryString(vararg params: Pair<String, Any?>): String {
+        val parts = params.flatMap { (key, value) ->
+            val encodedKey = key.encodeURLParameter()
+            when (value) {
+                null -> emptyList()
+                // Array wire names arrive as an Iterable keyed by the raw
+                // bracketed name (e.g. "bucket_ids[]"); expand into one
+                // repeated `key=elem` pair per element rather than stringifying
+                // the whole list. The key is encoded (`[]` → `%5B%5D`).
+                is Iterable<*> -> value.filterNotNull()
+                    .map { "$encodedKey=${it.toString().encodeURLParameter()}" }
+                else -> listOf("$encodedKey=${value.toString().encodeURLParameter()}")
+            }
+        }
+        return if (parts.isEmpty()) "" else "?" + parts.joinToString("&")
+    }
+
+    /**
+     * Executes a GET request for the given account-relative path.
+     */
+    protected suspend fun httpGet(path: String, operationName: String? = null): HttpResponse =
+        http.requestWithRetry(HttpMethod.Get, accountUrl(path), operationName = operationName)
+
+    /**
+     * Executes a POST request with a JSON body.
+     */
+    protected suspend fun httpPost(path: String, body: String? = null, operationName: String? = null): HttpResponse =
+        http.requestWithRetry(HttpMethod.Post, accountUrl(path), body, operationName = operationName)
+
+    /**
+     * Executes a PUT request with a JSON body.
+     */
+    protected suspend fun httpPut(path: String, body: String? = null, operationName: String? = null): HttpResponse =
+        http.requestWithRetry(HttpMethod.Put, accountUrl(path), body, operationName = operationName)
+
+    /**
+     * Executes a DELETE request.
+     */
+    protected suspend fun httpDelete(path: String, operationName: String? = null): HttpResponse =
+        http.requestWithRetry(HttpMethod.Delete, accountUrl(path), operationName = operationName)
+
+    /**
+     * Executes a POST request with binary body data.
+     */
+    protected suspend fun httpPostBinary(path: String, data: ByteArray, contentType: String): HttpResponse =
+        http.requestBinaryWithRetry(HttpMethod.Post, accountUrl(path), data, contentType)
+
+    /**
+     * Executes a PUT request with multipart/form-data body.
+     * Builds the MIME multipart envelope with proper header sanitization.
+     */
+    protected suspend fun httpPutMultipart(
+        path: String,
+        fieldName: String,
+        data: ByteArray,
+        filename: String,
+        contentType: String,
+    ): HttpResponse {
+        val safeFieldName = fieldName.replace("\r", "").replace("\n", "").replace("\"", "\\\"")
+        val safeFilename = filename.replace("\r", "").replace("\n", "").replace("\"", "\\\"")
+        val safeContentType = contentType.replace("\r", "").replace("\n", "")
+        val boundary = "----BasecampSDK${com.basecamp.sdk.http.currentTimeMillis()}"
+        val preamble = buildString {
+            append("--$boundary\r\n")
+            append("Content-Disposition: form-data; name=\"$safeFieldName\"; filename=\"$safeFilename\"\r\n")
+            append("Content-Type: $safeContentType\r\n")
+            append("\r\n")
+        }
+        val epilogue = "\r\n--$boundary--\r\n"
+
+        val preambleBytes = preamble.encodeToByteArray()
+        val epilogueBytes = epilogue.encodeToByteArray()
+        val body = ByteArray(preambleBytes.size + data.size + epilogueBytes.size)
+        preambleBytes.copyInto(body, 0)
+        data.copyInto(body, preambleBytes.size)
+        epilogueBytes.copyInto(body, preambleBytes.size + data.size)
+
+        return http.requestBinaryWithRetry(
+            HttpMethod.Put,
+            accountUrl(path),
+            body,
+            "multipart/form-data; boundary=$boundary",
+        )
+    }
+
+    /**
+     * Executes an API request with error handling and hooks integration.
+     *
+     * @param info Operation metadata for hooks.
+     * @param fn The suspend function that performs the actual HTTP call.
+     * @param parse Deserializes the response body string into the result type.
+     * @return The parsed response.
+     */
+    protected suspend fun <T> request(
+        info: OperationInfo,
+        fn: suspend () -> HttpResponse,
+        parse: (String) -> T,
+    ): T {
+        val startTime = currentTimeMillis()
+
+        hooks.safeOnOperationStart(info)
+
+        try {
+            val response = fn()
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+
+            if (!response.status.isSuccess()) {
+                val error = errorFromResponse(response)
+                hooks.safeOnOperationEnd(info, OperationResult(duration, error))
+                throw error
+            }
+
+            // 204 No Content
+            if (response.status.value == 204) {
+                hooks.safeOnOperationEnd(info, OperationResult(duration))
+                @Suppress("UNCHECKED_CAST")
+                return Unit as T
+            }
+
+            val bodyText = normalizePersonIds(response.bodyAsText(), json)
+            val result = parse(bodyText)
+            hooks.safeOnOperationEnd(info, OperationResult(duration))
+            return result
+        } catch (e: BasecampException) {
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            hooks.safeOnOperationEnd(info, OperationResult(duration, e))
+            throw e
+        } catch (e: Exception) {
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            hooks.safeOnOperationEnd(info, OperationResult(duration, e))
+            throw e
+        }
+    }
+
+    /**
+     * Executes a paginated API request, automatically following Link headers.
+     *
+     * Returns a [ListResult] with all items across pages, plus [ListMeta]
+     * with `totalCount` and `truncated` information.
+     *
+     * @param info Operation metadata for hooks.
+     * @param options Pagination control (maxItems).
+     * @param fn The suspend function that performs the initial HTTP call.
+     * @param parseItems Parses a page's response body into a list of items.
+     */
+    protected suspend fun <T> requestPaginated(
+        info: OperationInfo,
+        options: PaginationOptions? = null,
+        fn: suspend () -> HttpResponse,
+        parseItems: (String) -> List<T>,
+    ): ListResult<T> {
+        val startTime = currentTimeMillis()
+        val maxItems = options?.maxItems
+
+        hooks.safeOnOperationStart(info)
+
+        try {
+            val response = fn()
+
+            if (!response.status.isSuccess()) {
+                val error = errorFromResponse(response)
+                val duration = (currentTimeMillis() - startTime).millisToDuration()
+                hooks.safeOnOperationEnd(info, OperationResult(duration, error))
+                throw error
+            }
+
+            val bodyText = normalizePersonIds(response.bodyAsText(), json)
+            val firstPageItems = parseItems(bodyText)
+            val totalCount = parseTotalCount(response.headers.toMap())
+
+            // A pinned page is the whole answer: return it without following
+            // links. `truncated` still reports whether more items existed —
+            // dropped by the cap, or reachable through the next link we
+            // deliberately did not follow.
+            if ((options?.page ?: 0L) > 0L) {
+                val cap = maxItems?.takeIf { it > 0 && firstPageItems.size > it }
+                val hasMore = cap != null || parseNextLink(response.headers["Link"]) != null
+                val items = if (cap != null) firstPageItems.take(cap) else firstPageItems
+                val duration = (currentTimeMillis() - startTime).millisToDuration()
+                val result = ListResult(items, ListMeta(totalCount, hasMore))
+                hooks.safeOnOperationEnd(info, OperationResult(duration))
+                return result
+            }
+
+            // Check if maxItems is satisfied by the first page
+            if (maxItems != null && maxItems > 0 && firstPageItems.size >= maxItems) {
+                val hasMore = firstPageItems.size > maxItems
+                    || parseNextLink(response.headers["Link"]) != null
+                val duration = (currentTimeMillis() - startTime).millisToDuration()
+                val result = ListResult(firstPageItems.take(maxItems), ListMeta(totalCount, hasMore))
+                hooks.safeOnOperationEnd(info, OperationResult(duration))
+                return result
+            }
+
+            // Follow pagination
+            val allItems = firstPageItems.toMutableList()
+            var currentResponse = response
+            val initialUrl = response.request.url.toString()
+
+            for (page in 1 until maxPages) {
+                val rawNextUrl = parseNextLink(currentResponse.headers["Link"]) ?: break
+                val nextUrl = resolveUrl(currentResponse.request.url.toString(), rawNextUrl)
+
+                // Validate same-origin to prevent SSRF / token leakage
+                if (!isSameOrigin(nextUrl, initialUrl)) {
+                    throw BasecampException.Api(
+                        "Pagination Link header points to different origin: $nextUrl",
+                        httpStatus = 0,
+                    )
+                }
+
+                currentResponse = http.requestWithRetry(HttpMethod.Get, nextUrl, operationName = info.operation)
+
+                if (!currentResponse.status.isSuccess()) {
+                    throw errorFromResponse(currentResponse)
+                }
+
+                val pageBody = normalizePersonIds(currentResponse.bodyAsText(), json)
+                val pageItems = parseItems(pageBody)
+                allItems.addAll(pageItems)
+
+                // Check maxItems cap
+                if (maxItems != null && maxItems > 0 && allItems.size >= maxItems) {
+                    val hasMore = allItems.size > maxItems
+                        || parseNextLink(currentResponse.headers["Link"]) != null
+                    val duration = (currentTimeMillis() - startTime).millisToDuration()
+                    val result = ListResult(allItems.take(maxItems), ListMeta(totalCount, hasMore))
+                    hooks.safeOnOperationEnd(info, OperationResult(duration))
+                    return result
+                }
+            }
+
+            val hasMore = parseNextLink(currentResponse.headers["Link"]) != null
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            val result = ListResult(allItems, ListMeta(totalCount, hasMore))
+            hooks.safeOnOperationEnd(info, OperationResult(duration))
+            return result
+        } catch (e: BasecampException) {
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            hooks.safeOnOperationEnd(info, OperationResult(duration, e))
+            throw e
+        } catch (e: Exception) {
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            hooks.safeOnOperationEnd(info, OperationResult(duration, e))
+            throw e
+        }
+    }
+
+    /**
+     * Executes a paginated request for wrapped responses, returning both the raw
+     * first page body (for wrapper field decoding) and the paginated items.
+     *
+     * @param info Operation metadata for hooks.
+     * @param options Pagination control (maxItems).
+     * @param fn The suspend function that performs the initial HTTP call.
+     * @param parseItems Parses a page's response body into a list of items.
+     * @return A [Pair] of the first page's raw body and the [ListResult] of all items.
+     */
+    protected suspend fun <T> requestPaginatedWrapped(
+        info: OperationInfo,
+        options: PaginationOptions? = null,
+        fn: suspend () -> HttpResponse,
+        parseItems: (String) -> List<T>,
+    ): Pair<String, ListResult<T>> {
+        val startTime = currentTimeMillis()
+        val maxItems = options?.maxItems
+
+        hooks.safeOnOperationStart(info)
+
+        try {
+            val response = fn()
+
+            if (!response.status.isSuccess()) {
+                val error = errorFromResponse(response)
+                val duration = (currentTimeMillis() - startTime).millisToDuration()
+                hooks.safeOnOperationEnd(info, OperationResult(duration, error))
+                throw error
+            }
+
+            val firstPageBody = normalizePersonIds(response.bodyAsText(), json)
+            val firstPageItems = parseItems(firstPageBody)
+            val totalCount = parseTotalCount(response.headers.toMap())
+
+            // A pinned page is the whole answer: return it without following
+            // links. `truncated` still reports whether more items existed —
+            // dropped by the cap, or reachable through the next link we
+            // deliberately did not follow.
+            if ((options?.page ?: 0L) > 0L) {
+                val cap = maxItems?.takeIf { it > 0 && firstPageItems.size > it }
+                val hasMore = cap != null || parseNextLink(response.headers["Link"]) != null
+                val items = if (cap != null) firstPageItems.take(cap) else firstPageItems
+                val duration = (currentTimeMillis() - startTime).millisToDuration()
+                val result = ListResult(items, ListMeta(totalCount, hasMore))
+                hooks.safeOnOperationEnd(info, OperationResult(duration))
+                return Pair(firstPageBody, result)
+            }
+
+            // Check if maxItems is satisfied by the first page
+            if (maxItems != null && maxItems > 0 && firstPageItems.size >= maxItems) {
+                val hasMore = firstPageItems.size > maxItems
+                    || parseNextLink(response.headers["Link"]) != null
+                val duration = (currentTimeMillis() - startTime).millisToDuration()
+                val result = ListResult(firstPageItems.take(maxItems), ListMeta(totalCount, hasMore))
+                hooks.safeOnOperationEnd(info, OperationResult(duration))
+                return Pair(firstPageBody, result)
+            }
+
+            // Follow pagination
+            val allItems = firstPageItems.toMutableList()
+            var currentResponse = response
+            val initialUrl = response.request.url.toString()
+
+            for (page in 1 until maxPages) {
+                val rawNextUrl = parseNextLink(currentResponse.headers["Link"]) ?: break
+                val nextUrl = resolveUrl(currentResponse.request.url.toString(), rawNextUrl)
+
+                if (!isSameOrigin(nextUrl, initialUrl)) {
+                    throw BasecampException.Api(
+                        "Pagination Link header points to different origin: $nextUrl",
+                        httpStatus = 0,
+                    )
+                }
+
+                currentResponse = http.requestWithRetry(HttpMethod.Get, nextUrl, operationName = info.operation)
+
+                if (!currentResponse.status.isSuccess()) {
+                    throw errorFromResponse(currentResponse)
+                }
+
+                val pageBody = normalizePersonIds(currentResponse.bodyAsText(), json)
+                val pageItems = parseItems(pageBody)
+                allItems.addAll(pageItems)
+
+                if (maxItems != null && maxItems > 0 && allItems.size >= maxItems) {
+                    val hasMore = allItems.size > maxItems
+                        || parseNextLink(currentResponse.headers["Link"]) != null
+                    val duration = (currentTimeMillis() - startTime).millisToDuration()
+                    val result = ListResult(allItems.take(maxItems), ListMeta(totalCount, hasMore))
+                    hooks.safeOnOperationEnd(info, OperationResult(duration))
+                    return Pair(firstPageBody, result)
+                }
+            }
+
+            val hasMore = parseNextLink(currentResponse.headers["Link"]) != null
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            val result = ListResult(allItems, ListMeta(totalCount, hasMore))
+            hooks.safeOnOperationEnd(info, OperationResult(duration))
+            return Pair(firstPageBody, result)
+        } catch (e: BasecampException) {
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            hooks.safeOnOperationEnd(info, OperationResult(duration, e))
+            throw e
+        } catch (e: Exception) {
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            hooks.safeOnOperationEnd(info, OperationResult(duration, e))
+            throw e
+        }
+    }
+
+    /**
+     * Streaming paginated request that emits items as each page arrives.
+     *
+     * Unlike [requestPaginated] which eagerly loads all pages, this returns
+     * a cold [Flow] that fetches pages lazily as the collector consumes items.
+     * Useful for processing large datasets without loading everything into memory.
+     *
+     * No generated service currently emits a method on this primitive; it is
+     * reserved for a future generated streaming surface. If the generator gains
+     * one, its output would take this shape (wire methods are never written by
+     * hand — see AGENTS.md):
+     *
+     * ```kotlin
+     * // Generator output (illustrative):
+     * fun listAsFlow(todolistId: Long): Flow<Todo> =
+     *     requestPaginatedAsFlow(
+     *         OperationInfo("Todos", "ListTodos", "todo", false, resourceId = todolistId),
+     *         { httpGet("/todolists/$todolistId/todos.json") },
+     *     ) { body -> json.decodeFromString<List<Todo>>(body) }
+     *
+     * // Collectors consume pages lazily:
+     * service.listAsFlow(todolistId).collect { todo -> println(todo.content) }
+     * ```
+     *
+     * @param info Operation metadata for hooks.
+     * @param fn The suspend function that performs the initial HTTP call.
+     * @param parseItems Parses a page's response body into a list of items.
+     */
+    protected fun <T> requestPaginatedAsFlow(
+        info: OperationInfo,
+        fn: suspend () -> HttpResponse,
+        parseItems: (String) -> List<T>,
+    ): Flow<T> = flow {
+        val startTime = currentTimeMillis()
+        hooks.safeOnOperationStart(info)
+
+        try {
+            var currentResponse = fn()
+
+            if (!currentResponse.status.isSuccess()) {
+                throw errorFromResponse(currentResponse)
+            }
+
+            val bodyText = currentResponse.bodyAsText()
+            val firstPageItems = parseItems(bodyText)
+            for (item in firstPageItems) emit(item)
+
+            val initialUrl = currentResponse.request.url.toString()
+
+            for (page in 1 until maxPages) {
+                val rawNextUrl = parseNextLink(currentResponse.headers["Link"]) ?: break
+                val nextUrl = resolveUrl(currentResponse.request.url.toString(), rawNextUrl)
+
+                if (!isSameOrigin(nextUrl, initialUrl)) {
+                    throw BasecampException.Api(
+                        "Pagination Link header points to different origin: $nextUrl",
+                        httpStatus = 0,
+                    )
+                }
+
+                currentResponse = http.requestWithRetry(HttpMethod.Get, nextUrl, operationName = info.operation)
+
+                if (!currentResponse.status.isSuccess()) {
+                    throw errorFromResponse(currentResponse)
+                }
+
+                val pageBody = normalizePersonIds(currentResponse.bodyAsText(), json)
+                val pageItems = parseItems(pageBody)
+                for (item in pageItems) emit(item)
+            }
+
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            hooks.safeOnOperationEnd(info, OperationResult(duration))
+        } catch (e: Exception) {
+            val duration = (currentTimeMillis() - startTime).millisToDuration()
+            hooks.safeOnOperationEnd(info, OperationResult(duration, e))
+            throw e
+        }
+    }
+
+    /**
+     * Converts an HTTP error response to a [BasecampException] via the shared
+     * SPEC §6 parser ([exceptionFromErrorBody]) used by every SDK surface.
+     */
+    private suspend fun errorFromResponse(response: HttpResponse): BasecampException {
+        val bodyText = try {
+            normalizePersonIds(response.bodyAsText(), json)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+        return exceptionFromErrorBody(
+            status = response.status.value,
+            statusDescription = response.status.description,
+            bodyText = bodyText,
+            requestId = response.headers["X-Request-Id"],
+            retryAfter = parseRetryAfter(response.headers["Retry-After"]),
+            json = json,
+        )
+    }
+
+    companion object {
+        /** Resolve a potentially relative URL against a base URL. */
+        internal fun resolveUrl(base: String, relative: String): String {
+            // If it's already absolute, return as-is
+            if (relative.startsWith("http://") || relative.startsWith("https://")) {
+                return relative
+            }
+            // Extract origin from base
+            val schemeEnd = base.indexOf("://")
+            if (schemeEnd < 0) return relative
+            val afterScheme = schemeEnd + 3
+            val pathStart = base.indexOf('/', afterScheme)
+            val origin = if (pathStart < 0) base else base.substring(0, pathStart)
+            val normalizedPath = if (relative.startsWith("/")) relative else "/$relative"
+            return "$origin$normalizedPath"
+        }
+    }
+}
+
+/** Safely invoke onOperationStart, catching hook exceptions. */
+private fun BasecampHooks.safeOnOperationStart(info: OperationInfo) {
+    runCatching { onOperationStart(info) }
+}
+
+/** Safely invoke onOperationEnd, catching hook exceptions. */
+private fun BasecampHooks.safeOnOperationEnd(info: OperationInfo, result: OperationResult) {
+    runCatching { onOperationEnd(info, result) }
+}
+
+/** Convert Ktor headers to a simple map for pagination utilities. */
+private fun io.ktor.http.Headers.toMap(): Map<String, List<String>> {
+    val result = mutableMapOf<String, List<String>>()
+    forEach { key, values -> result[key] = values }
+    return result
+}

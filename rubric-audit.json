@@ -1,0 +1,104 @@
+{
+  "profile": "full-sdk",
+  "date": "2026-08-01",
+  "reviewer": "agent:conformance-runner",
+  "criteria": {
+    "1A.6": {
+      "pass": true,
+      "note": "All operations generated from OpenAPI via per-language generators"
+    },
+    "1B.2": {
+      "pass": true,
+      "note": "Request/response types generated from OpenAPI schema"
+    },
+    "1B.4": {
+      "pass": true,
+      "issue": 436,
+      "note": "Met. Kotlin: optional scalars fixed in #424, optional arrays in #433, both pinned by make kt-check-optional-arrays-and-scalars (required-and-nullable distinguished as `T?` with no default). Go: resolved by the optional-pointer end-state — the global prefer-skip-optional-pointer flag is removed, so every optional value type (strings, booleans, numerics, time.Time, types.Date, structs) generates as a pointer; optional non-nullable response arrays keep native []T (nil represents absence) via a generic enhance-script pass; request-shaped and nullable arrays stay pointers. Pinned by make go-check-optional-pointers, which classifies every omitempty field by type with NO waiver list (pointer/slice/map/interface pass, value types fail). Ruby/Swift retain the documented encode-only residue (they decode faithfully but drop nil on re-encode) — that is outside this criterion's static-type scope per SPEC.md §10. HISTORY: this criterion previously failed on two counts, both now closed — Kotlin optional scalars emitting zero-value defaults (false since #424; the entry's claim was corrected 2026-07-27), and Go optional value types being unable to represent absence at all, e.g. UpdateCardColumnRequestContent.Description generated as a bare `string` with omitempty so absence and an explicit \"\" were indistinguishable AND the empty string was unsendable. The Go half is what this end-state resolves."
+    },
+    "1B.5": {
+      "pass": true,
+      "note": "Temporal fields carry ISO 8601 on the wire in all six SDKs: Go decodes to time.Time; Ruby coerces via Time.parse for fields the schema marks x-go-type time.Time, matched after stripping a leading pointer star so either spelling coerces (#537 — the exact-string match previously let *time.Time-spelled fields, MyNote.created_at/updated_at and Draft.scheduled_posting_at, pass through as raw strings; regression-tested in generated_types_test.rb). types.FlexibleTime is deliberately not coerced: it also accepts date-only values. TypeScript, Python, Kotlin, and Swift preserve the ISO 8601 string verbatim (no lossy coercion)"
+    },
+    "1C.1": {
+      "pass": true,
+      "note": "All API paths verified against upstream BC4 API documentation"
+    },
+    "1C.3": {
+      "pass": true,
+      "note": "Paths constructed from OpenAPI spec via generated route tables; no manual path construction"
+    },
+    "2A.6": {
+      "pass": true,
+      "note": "Error bodies truncated via Security.check_body_size! and Security.truncate"
+    },
+    "2D.5": {
+      "pass": true,
+      "note": "All six SDKs consume per-operation retry metadata from behavior-model.json (declared retry_on status set and per-op max). The four SDKs with a public numeric caller cap compose the ceiling as min(caller cap, op max): Go and Python (per-op ceiling #483, retry_on gate #486), Ruby and Kotlin (#515). TypeScript and Swift expose only a boolean retry switch and apply the operation's declared parameters directly (TS since its middleware inception). Non-Smithy traffic (absolute-URL fetches, Launchpad authorization) carries no operation id and keeps per-client config."
+    },
+    "3A.4": {
+      "pass": true,
+      "note": "OAuth PKCE discovery uses .well-known/oauth-authorization-server"
+    },
+    "3A.5": {
+      "pass": true,
+      "note": "OAuth PKCE code exchange implemented in five SDKs (Go, TypeScript, Python, Ruby, Kotlin); Swift ships token-provider injection only, with no OAuth utility surface"
+    },
+    "3A.6": {
+      "pass": true,
+      "note": "Token auto-refresh with 60s expiry buffer"
+    },
+    "3C.2": {
+      "pass": true,
+      "note": "Response body size limited via Security::MAX_RESPONSE_BODY_BYTES"
+    },
+    "3C.3": {
+      "pass": true,
+      "note": "Error messages truncated to 1024 chars via Security.truncate"
+    },
+    "3C.4": {
+      "pass": true,
+      "note": "Authorization header redacted in all logging hooks"
+    },
+    "4B.5": {
+      "pass": true,
+      "note": "AGENTS.md requires tests for every new operation"
+    },
+    "4C.4": {
+      "pass": true,
+      "note": "Release workflows are idempotent; per-language workflows can be re-run independently"
+    },
+    "3C.6": {
+      "pass": true,
+      "note": "All six SDKs auto-paginate with same-origin enforcement before following Link headers. A prior Go waiver ('consumer-driven pagination; same-origin enforcement is caller responsibility') is obsolete: Go auto-paginates and enforces same-origin in client.go before following Link, and the Go runner passes all security.json pagination tests un-skipped (its two origin-normalization skips are runner mechanics — httptest owns its origin — compensated by TestIsSameOrigin unit coverage)."
+    },
+    "2B.1": {
+      "pass": true,
+      "note": "Retry driven by per-operation metadata exists in all six SDKs. A prior TypeScript waiver ('retry middleware uses native fetch for retries, limiting chained retry count to 1') is obsolete: the TS retry loop now runs beneath the openapi-fetch middleware chain as the client's custom fetch, so status retries run to each operation's declared retry.max and network errors retry under the idempotency gate (caller aborts and request timeouts are terminal). The TS runner passes the 503 multi-retry and idempotent-POST network-retry conformance cases un-skipped."
+    },
+    "2B.3": {
+      "pass": true,
+      "waiver": true,
+      "note": "Ruby SDK only retries GET requests; PUT/DELETE sent once by design to avoid mutation side effects",
+      "language": "ruby"
+    },
+    "2C.2": {
+      "pass": true,
+      "note": "All six SDKs expose the X-Total-Count header as pagination metadata. A prior Ruby waiver ('paginate returns Enumerator yielding items; X-Total-Count not exposed') is obsolete: Ruby's paginators now return a ListEnumerator carrying ListMeta, with the first page fetched eagerly so meta.total_count (0 when the header is absent) is available at call time, and the Ruby runner passes the totalCount conformance cases un-skipped."
+    },
+    "1B.6": {
+      "pass": true,
+      "waiver": true,
+      "note": "Lossless decode is feasible on Node >=22.12 via JSON.parse reviver source access, but emitting bigint would break the SDK's number-typed API surface",
+      "language": "typescript"
+    },
+    "2C.4": {
+      "pass": true,
+      "note": "All six SDKs support a client-side item cap on auto-pagination. A prior Ruby waiver ('lazy Enumerator; maxItems cap requires ListResult refactor') is obsolete: every generated Ruby list method now accepts max_items (non-positive values disable the cap, matching the other SDKs), enumeration stops at the cap without fetching further pages, and the Ruby runner passes both maxItems conformance cases un-skipped."
+    },
+    "2C.6": {
+      "pass": true,
+      "note": "All six SDKs expose truncation metadata with the shared contract (truncated only when items were dropped or a next Link was left unfetched; an exact-boundary cap is not truncation). A prior Ruby waiver ('Enumerator does not expose truncation metadata') is obsolete: Ruby's ListEnumerator carries meta.truncated, finalized once the lazy enumeration completes, and the Ruby runner consumes-then-asserts the truncated conformance cases un-skipped."
+    }
+  }
+}

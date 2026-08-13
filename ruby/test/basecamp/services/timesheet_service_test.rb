@@ -1,0 +1,96 @@
+# frozen_string_literal: true
+
+# Tests for the TimesheetsService (generated from OpenAPI spec)
+#
+# Note: Generated services are spec-conformant:
+# - Service accessor: timesheets (plural) not timesheet
+# - Method names: for_project(), for_recording() (not project_report, recording_report)
+
+require "test_helper"
+
+class TimesheetServiceTest < Minitest::Test
+  include TestHelper
+
+  def setup
+    @account = create_account_client(account_id: "12345")
+  end
+
+  def test_report
+    response = {
+      "entries" => [
+        { "id" => 1, "hours" => 8.0, "description" => "Development work" }
+      ]
+    }
+
+    stub_request(:get, %r{https://3\.basecampapi\.com/12345/reports/timesheet\.json})
+      .to_return(status: 200, body: response.to_json, headers: { "Content-Type" => "application/json" })
+
+    result = @account.timesheets.report
+    assert_kind_of Hash, result
+    assert_kind_of Array, result["entries"]
+    assert_equal 8.0, result["entries"].first["hours"]
+  end
+
+  def test_report_with_date_range
+    response = { "entries" => [ { "id" => 1, "hours" => 4.0 } ] }
+
+    stub_request(:get, %r{https://3\.basecampapi\.com/12345/reports/timesheet\.json\?from=2024-01-01&to=2024-01-31})
+      .to_return(status: 200, body: response.to_json, headers: { "Content-Type" => "application/json" })
+
+    result = @account.timesheets.report(from: "2024-01-01", to: "2024-01-31")
+    assert_equal 4.0, result["entries"].first["hours"]
+  end
+
+  def test_for_project
+    response = [ { "id" => 1, "hours" => 6.0 } ]
+
+    stub_request(:get, %r{https://3\.basecampapi\.com/12345/projects/\d+/timesheet\.json})
+      .to_return(status: 200, body: response.to_json, headers: { "Content-Type" => "application/json" })
+
+    result = @account.timesheets.for_project(project_id: 456)
+    assert_kind_of Enumerator, result
+    entries = result.to_a
+    assert_equal 6.0, entries.first["hours"]
+  end
+
+  def test_for_recording
+    response = [ { "id" => 1, "hours" => 2.5 } ]
+
+    stub_request(:get, %r{https://3\.basecampapi\.com/12345/recordings/\d+/timesheet\.json})
+      .to_return(status: 200, body: response.to_json, headers: { "Content-Type" => "application/json" })
+
+    result = @account.timesheets.for_recording(recording_id: 2)
+    assert_kind_of Enumerator, result
+    entries = result.to_a
+    assert_equal 2.5, entries.first["hours"]
+  end
+
+  # Timesheet entries are addressed flat off the account, not through a bucket:
+  # the URL below is the whole assertion, so a /buckets/<id>/ regression fails it.
+  DESTROY_URL = "https://3.basecampapi.com/12345/timesheet_entries/9007199254741099"
+
+  def test_destroy
+    stub_request(:delete, DESTROY_URL).to_return(status: 204, body: "")
+
+    assert_nil @account.timesheets.destroy(entry_id: 9007199254741099)
+    assert_requested :delete, DESTROY_URL, times: 1
+  end
+
+  # bc3's Timesheets::EntriesController#destroy answers head :forbidden when
+  # Current.person.can_archive_or_trash? is false.
+  def test_destroy_forbidden
+    stub_request(:delete, DESTROY_URL)
+      .to_return(status: 403, body: "", headers: { "Content-Type" => "application/json" })
+
+    error = assert_raises(Basecamp::ForbiddenError) do
+      @account.timesheets.destroy(entry_id: 9007199254741099)
+    end
+
+    # Discriminating: assert the classification, not just the class — a wrong
+    # status would surface as a different code/http_status pair.
+    assert_equal Basecamp::ErrorCode::FORBIDDEN, error.code
+    assert_equal 403, error.http_status
+    assert_not error.retryable?
+    assert_requested :delete, DESTROY_URL, times: 1
+  end
+end

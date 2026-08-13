@@ -1,0 +1,958 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Generates Ruby service classes from OpenAPI spec.
+#
+# Usage: ruby scripts/generate-services.rb [--openapi ../openapi.json] [--output lib/basecamp/generated/services]
+#
+# This generator:
+# 1. Parses openapi.json
+# 2. Groups operations by tag
+# 3. Maps operationIds to method names
+# 4. Generates Ruby service files
+
+require 'json'
+require 'fileutils'
+require 'set'
+
+# Service generator for Ruby SDK
+class ServiceGenerator
+  METHODS = %w[get post put patch delete].freeze
+
+  # Schema reference cache for resolving $ref
+  attr_reader :schemas
+
+  # Tag to service name mapping overrides
+  TAG_TO_SERVICE = {
+    'Card Tables' => 'CardTables',
+    'Campfire' => 'Campfires',
+    'Todos' => 'Todos',
+    'Messages' => 'Messages',
+    'Files' => 'Files',
+    'Forwards' => 'Forwards',
+    'Schedule' => 'Schedules',
+    'People' => 'People',
+    'Projects' => 'Projects',
+    'Automation' => 'Automation',
+    'ClientFeatures' => 'ClientFeatures',
+    'Boosts' => 'Boosts',
+    'Untagged' => 'Miscellaneous'
+  }.freeze
+
+  # Service splits - some tags map to multiple services
+  SERVICE_SPLITS = {
+    'Campfire' => {
+      'Campfires' => %w[
+        GetCampfire ListCampfires
+        ListChatbots CreateChatbot GetChatbot UpdateChatbot DeleteChatbot
+        ListCampfireLines CreateCampfireLine GetCampfireLine UpdateCampfireLine DeleteCampfireLine
+        ListCampfireUploads CreateCampfireUpload
+      ]
+    },
+    'Card Tables' => {
+      'CardTables' => %w[GetCardTable],
+      'Cards' => %w[GetCard UpdateCard MoveCard CreateCard ListCards],
+      'CardColumns' => %w[
+        GetCardColumn UpdateCardColumn SetCardColumnColor
+        EnableCardColumnOnHold DisableCardColumnOnHold
+        CreateCardColumn MoveCardColumn
+      ],
+      'CardSteps' => %w[
+        GetCardStep CreateCardStep UpdateCardStep SetCardStepCompletion
+        RepositionCardStep
+      ],
+      'Wormholes' => %w[CreateWormhole UpdateWormhole DeleteWormhole]
+    },
+    'Files' => {
+      'Attachments' => %w[CreateAttachment],
+      'Uploads' => %w[GetUpload UpdateUpload ListUploads CreateUpload ListUploadVersions CreateUploadVersion],
+      'Vaults' => %w[GetVault UpdateVault ListVaults CreateVault],
+      'Documents' => %w[GetDocument ReplaceDocument ListDocuments CreateDocument],
+      'CloudFiles' => %w[GetCloudFile CreateCloudFile UpdateCloudFile],
+      'GoogleDocuments' => %w[GetGoogleDocument CreateGoogleDocument UpdateGoogleDocument]
+    },
+    'Automation' => {
+      'Tools' => %w[GetTool UpdateTool DeleteTool CreateTool EnableTool DisableTool RepositionTool],
+      'Recordings' => %w[ArchiveRecording UnarchiveRecording TrashRecording ListRecordings],
+      'Webhooks' => %w[ListWebhooks CreateWebhook GetWebhook UpdateWebhook DeleteWebhook],
+      'Events' => %w[ListEvents],
+      'Lineup' => %w[CreateLineupMarker UpdateLineupMarker DeleteLineupMarker],
+      'Search' => %w[Search GetSearchMetadata],
+      'Templates' => %w[
+        ListTemplates CreateTemplate GetTemplate UpdateTemplate
+        DeleteTemplate CreateProjectFromTemplate GetProjectConstruction
+      ],
+      'Checkins' => %w[
+        GetQuestionnaire ListQuestions CreateQuestion GetQuestion
+        UpdateQuestion ListAnswers CreateAnswer GetAnswer UpdateAnswer
+      ]
+    },
+    'Messages' => {
+      'Messages' => %w[GetMessage UpdateMessage CreateMessage ListMessages PinMessage UnpinMessage],
+      'MessageBoards' => %w[GetMessageBoard],
+      'MessageTypes' => %w[
+        ListMessageTypes CreateMessageType GetMessageType
+        UpdateMessageType DeleteMessageType
+      ],
+      'Comments' => %w[GetComment UpdateComment ListComments CreateComment]
+    },
+    'People' => {
+      'People' => %w[
+        GetMyProfile ListPeople GetPerson ListProjectPeople
+        UpdateProjectAccess ListPingablePeople
+      ],
+      'Subscriptions' => %w[GetSubscription Subscribe Unsubscribe UpdateSubscription]
+    },
+    'Schedule' => {
+      'Schedules' => %w[
+        GetSchedule UpdateScheduleSettings ListScheduleEntries
+        CreateScheduleEntry GetScheduleEntry ReplaceScheduleEntry
+        GetScheduleEntryOccurrence
+      ],
+      'Timesheets' => %w[GetRecordingTimesheet GetProjectTimesheet GetTimesheetReport GetTimesheetEntry CreateTimesheetEntry UpdateTimesheetEntry DestroyTimesheetEntry]
+    },
+    'ClientFeatures' => {
+      'ClientApprovals' => %w[ListClientApprovals GetClientApproval],
+      'ClientCorrespondences' => %w[ListClientCorrespondences GetClientCorrespondence],
+      'ClientReplies' => %w[ListClientReplies GetClientReply],
+      'ClientVisibility' => %w[SetClientVisibility]
+    },
+    'Todos' => {
+      'Todos' => %w[ListTodos CreateTodo CreateTodosetTodo GetTodo ReplaceTodo CompleteTodo UncompleteTodo],
+      'Todolists' => %w[GetTodolistOrGroup UpdateTodolistOrGroup ListTodolists CreateTodolist RepositionTodolist],
+      'Todosets' => %w[GetTodoset],
+      'HillCharts' => %w[GetHillChart UpdateHillChartSettings],
+      'TodolistGroups' => %w[ListTodolistGroups CreateTodolistGroup RepositionTodolistGroup]
+    },
+    'Untagged' => {
+      'Timeline' => %w[GetProjectTimeline],
+      'Reports' => %w[GetProgressReport GetUpcomingSchedule GetAssignedTodos GetOverdueTodos GetPersonProgress],
+      'Checkins' => %w[
+        GetQuestionReminders ListQuestionAnswerers GetAnswersByPerson
+        UpdateQuestionNotificationSettings PauseQuestion ResumeQuestion
+      ],
+      'Todos' => %w[RepositionTodo],
+      'People' => %w[ListAssignablePeople],
+      'CardColumns' => %w[SubscribeToCardColumn UnsubscribeFromCardColumn]
+    }
+  }.freeze
+
+  # Method name overrides
+  METHOD_NAME_OVERRIDES = {
+    'GetMyProfile' => 'my_profile',
+    'GetTodolistOrGroup' => 'get',
+    # The plain `update` name belongs to the merge-safe composite; the raw
+    # single-PUT path keeps a name that says what it does. BC3 rebuilds the
+    # todolist from the permitted params, so omission clears. See #374.
+    'UpdateTodolistOrGroup' => 'replace',
+    'SetCardColumnColor' => 'set_color',
+    'EnableCardColumnOnHold' => 'enable_on_hold',
+    'DisableCardColumnOnHold' => 'disable_on_hold',
+    'RepositionCardStep' => 'reposition',
+    'CreateCardStep' => 'create',
+    'UpdateCardStep' => 'update',
+    # The plain `update` name belongs to the tri-state `due_on` wrapper in
+    # CardsExtensions; the unnormalised path keeps a name that says what it
+    # does. See #467.
+    'UpdateCard' => 'update_verbatim',
+    'SetCardStepCompletion' => 'set_completion',
+    'GetQuestionnaire' => 'get_questionnaire',
+    'GetQuestion' => 'get_question',
+    'GetAnswer' => 'get_answer',
+    'ListQuestions' => 'list_questions',
+    'ListAnswers' => 'list_answers',
+    'CreateQuestion' => 'create_question',
+    'CreateAnswer' => 'create_answer',
+    'UpdateQuestion' => 'update_question',
+    'UpdateAnswer' => 'update_answer',
+    'GetQuestionReminders' => 'reminders',
+    'GetAnswersByPerson' => 'by_person',
+    'ListQuestionAnswerers' => 'answerers',
+    'UpdateQuestionNotificationSettings' => 'update_notification_settings',
+    'PauseQuestion' => 'pause',
+    'ResumeQuestion' => 'resume',
+    'GetSearchMetadata' => 'metadata',
+    'Search' => 'search',
+    'CreateProjectFromTemplate' => 'create_project',
+    'GetProjectConstruction' => 'get_construction',
+    'GetRecordingTimesheet' => 'for_recording',
+    'GetProjectTimesheet' => 'for_project',
+    'GetTimesheetReport' => 'report',
+    'GetTimesheetEntry' => 'get',
+    'CreateTimesheetEntry' => 'create',
+    'UpdateTimesheetEntry' => 'update',
+    'DestroyTimesheetEntry' => 'destroy',
+    'GetProgressReport' => 'progress',
+    'GetUpcomingSchedule' => 'upcoming',
+    'GetAssignedTodos' => 'assigned',
+    'GetOverdueTodos' => 'overdue',
+    'GetPersonProgress' => 'person_progress',
+    'SubscribeToCardColumn' => 'subscribe_to_column',
+    'UnsubscribeFromCardColumn' => 'unsubscribe_from_column',
+    'SetClientVisibility' => 'set_visibility',
+    # Campfires - use specific names to avoid conflicts between campfire, chatbots, and lines
+    'GetCampfire' => 'get',
+    'ListCampfires' => 'list',
+    'ListChatbots' => 'list_chatbots',
+    'CreateChatbot' => 'create_chatbot',
+    'GetChatbot' => 'get_chatbot',
+    'UpdateChatbot' => 'update_chatbot',
+    'DeleteChatbot' => 'delete_chatbot',
+    'ListCampfireLines' => 'list_lines',
+    'CreateCampfireLine' => 'create_line',
+    'GetCampfireLine' => 'get_line',
+    'UpdateCampfireLine' => 'update_line',
+    'DeleteCampfireLine' => 'delete_line',
+    'ListCampfireUploads' => 'list_uploads',
+    'CreateCampfireUpload' => 'create_upload',
+    # Forwards - use specific names to avoid conflicts between forwards, replies, and inbox
+    'GetForward' => 'get',
+    'ListForwards' => 'list',
+    'GetForwardReply' => 'get_reply',
+    'ListForwardReplies' => 'list_replies',
+    'GetInbox' => 'get_inbox',
+    # Uploads - use specific names to avoid conflicts with versions
+    'GetUpload' => 'get',
+    'UpdateUpload' => 'update',
+    'ListUploads' => 'list',
+    'CreateUpload' => 'create',
+    'ListUploadVersions' => 'list_versions',
+    'CreateUploadVersion' => 'create_version',
+    'GetMessage' => 'get',
+    'UpdateMessage' => 'update',
+    'CreateMessage' => 'create',
+    'ListMessages' => 'list',
+    'PinMessage' => 'pin',
+    'UnpinMessage' => 'unpin',
+    'GetMessageBoard' => 'get',
+    'GetMessageType' => 'get',
+    'UpdateMessageType' => 'update',
+    'CreateMessageType' => 'create',
+    'ListMessageTypes' => 'list',
+    'DeleteMessageType' => 'delete',
+    'GetComment' => 'get',
+    'UpdateComment' => 'update',
+    'CreateComment' => 'create',
+    'ListComments' => 'list',
+    'ListProjectPeople' => 'list_for_project',
+    'ListPingablePeople' => 'list_pingable',
+    'ListAssignablePeople' => 'list_assignable',
+    'GetSchedule' => 'get',
+    'UpdateScheduleSettings' => 'update_settings',
+    'GetScheduleEntry' => 'get_entry',
+    # The plain `update_entry` name belongs to the merge-safe composite; the raw
+    # single-PUT path keeps a name that says what it does. Without the override
+    # the algorithm yields a bare `replace` (scheduleentry is a SIMPLE_RESOURCE),
+    # which reads as "replace the schedule". See #547.
+    'ReplaceScheduleEntry' => 'replace_entry',
+    'CreateScheduleEntry' => 'create_entry',
+    'ListScheduleEntries' => 'list_entries',
+    'GetScheduleEntryOccurrence' => 'get_entry_occurrence',
+    'GetHillChart' => 'get',
+    'UpdateHillChartSettings' => 'update_settings'
+  }.freeze
+
+  # Verb patterns for extracting method names
+  VERB_PATTERNS = [
+    { prefix: 'Subscribe', method: 'subscribe' },
+    { prefix: 'Unsubscribe', method: 'unsubscribe' },
+    { prefix: 'List', method: 'list' },
+    { prefix: 'Get', method: 'get' },
+    { prefix: 'Create', method: 'create' },
+    { prefix: 'Update', method: 'update' },
+    { prefix: 'Replace', method: 'replace' },
+    { prefix: 'Delete', method: 'delete' },
+    { prefix: 'Trash', method: 'trash' },
+    { prefix: 'Archive', method: 'archive' },
+    { prefix: 'Unarchive', method: 'unarchive' },
+    { prefix: 'Complete', method: 'complete' },
+    { prefix: 'Uncomplete', method: 'uncomplete' },
+    { prefix: 'Enable', method: 'enable' },
+    { prefix: 'Disable', method: 'disable' },
+    { prefix: 'Reposition', method: 'reposition' },
+    { prefix: 'Move', method: 'move' },
+    { prefix: 'Clone', method: 'clone' },
+    { prefix: 'Set', method: 'set' },
+    { prefix: 'Pin', method: 'pin' },
+    { prefix: 'Unpin', method: 'unpin' },
+    { prefix: 'Pause', method: 'pause' },
+    { prefix: 'Resume', method: 'resume' },
+    { prefix: 'Search', method: 'search' }
+  ].freeze
+
+  # Hand-written methods appended to specific generated services.
+  # Keyed by service name; value is an array of method code strings indented to match generated output.
+  HAND_WRITTEN_METHODS = {
+    'Uploads' => [
+      <<~RUBY.chomp
+        # Download an upload's file content in one call.
+        # Fetches upload metadata, then delegates to the AccountClient download
+        # primitive so the auth'd-hop + 302-follow flow lives in one place.
+        # @param upload_id [Integer] upload id ID
+        # @return [Basecamp::DownloadResult]
+        def download(upload_id:)
+          with_operation(service: "uploads", operation: "download", is_mutation: false, resource_id: upload_id) do
+            upload = get(upload_id: upload_id)
+            url = upload["download_url"]
+            raise UsageError.new("upload \#{upload_id} has no download_url") if url.nil? || url.empty?
+
+            result = @client.download_url(url)
+            filename = upload["filename"]
+            filename.to_s.empty? ? result : result.with(filename: filename)
+          end
+        end
+      RUBY
+    ]
+  }.freeze
+
+  SIMPLE_RESOURCES = %w[
+    todo todos todolist todolists todoset message messages comment comments
+    card cards cardtable cardcolumn cardstep column step project projects
+    person people campfire campfires chatbot chatbots webhook webhooks
+    vault vaults document documents upload uploads schedule scheduleentry
+    scheduleentries event events recording recordings template templates
+    attachment question questions answer answers questionnaire subscription
+    forward forwards inbox messageboard messagetype messagetypes tool
+    lineupmarker clientapproval clientapprovals clientcorrespondence
+    clientcorrespondences clientreply clientreplies forwardreply
+    forwardreplies campfireline campfirelines todolistgroup todolistgroups
+    todolistorgroup uploadversions hillchart hillcharts
+    wormhole wormholes
+  ].freeze
+
+  def initialize(openapi_path)
+    # UTF-8 regardless of process locale — see generate-metadata.rb
+    @openapi = JSON.parse(File.read(openapi_path, encoding: 'UTF-8'))
+    @schemas = @openapi.dig('components', 'schemas') || {}
+  end
+
+  def generate(output_dir)
+    FileUtils.mkdir_p(output_dir)
+
+    services = group_operations
+    generated_files = []
+
+    services.each do |name, service|
+      code = generate_service(service)
+      filename = "#{to_snake_case(name)}_service.rb"
+      filepath = File.join(output_dir, filename)
+      File.write(filepath, code)
+      generated_files << filename
+      puts "Generated #{filename} (#{service[:operations].length} operations)"
+    end
+
+    # Remove stale generated files that are no longer produced by the current spec.
+    # Only deletes files with the @generated marker to avoid removing hand-written files.
+    generated_set = generated_files.to_set
+    Dir.glob(File.join(output_dir, '*_service.rb')).each do |existing|
+      basename = File.basename(existing)
+      next if generated_set.include?(basename)
+      next unless File.read(existing, 256).include?('@generated')
+
+      File.delete(existing)
+      puts "Removed stale #{basename}"
+    end
+
+    puts "\nGenerated #{services.length} services with #{services.values.sum { |s| s[:operations].length }} operations total."
+    generated_files
+  end
+
+  private
+
+  def group_operations
+    services = {}
+
+    @openapi['paths'].each do |path, path_item|
+      METHODS.each do |method|
+        operation = path_item[method]
+        next unless operation
+
+        tag = operation['tags']&.first || 'Untagged'
+        parsed = parse_operation(path, method, operation)
+
+        # Determine which service this operation belongs to
+        service_name = find_service_for_operation(tag, operation['operationId'])
+
+        services[service_name] ||= {
+          name: service_name,
+          class_name: "#{service_name}Service",
+          description: "Service for #{service_name} operations",
+          operations: []
+        }
+
+        services[service_name][:operations] << parsed
+      end
+    end
+
+    services
+  end
+
+  def find_service_for_operation(tag, operation_id)
+    if SERVICE_SPLITS[tag]
+      SERVICE_SPLITS[tag].each do |svc, op_ids|
+        return svc if op_ids.include?(operation_id)
+      end
+    end
+
+    TAG_TO_SERVICE[tag] || tag.gsub(/\s+/, '')
+  end
+
+  def parse_operation(path, method, operation)
+    operation_id = operation['operationId']
+    method_name = extract_method_name(operation_id)
+    http_method = method.upcase
+    description = operation['description']&.lines&.first&.strip || "#{method_name} operation"
+
+    # Extract path parameters (excluding accountId)
+    path_params = (operation['parameters'] || [])
+                  .select { |p| p['in'] == 'path' && p['name'] != 'accountId' }
+                  .map { |p| { name: p['name'], type: schema_to_ruby_type(p['schema']), description: p['description'] } }
+
+    # Extract query parameters
+    query_params = (operation['parameters'] || [])
+                   .select { |p| p['in'] == 'query' }
+                   .map do |p|
+      {
+        # Strip a trailing `[]` from bracketed array wire names (e.g.
+        # `bucket_ids[]`): the kwarg and the params-hash key are both clean
+        # `bucket_ids`, and Faraday's NestedParamsEncoder re-adds the `[]` when
+        # serializing the array value (a raw `bucket_ids[]` key would double to
+        # `bucket_ids[][]=`).
+        name: p['name'].sub(/\[\]\z/, ''),
+        type: schema_to_ruby_type(p['schema']),
+        required: p['required'] || false,
+        description: p['description']
+      }
+    end
+
+    # Check for request body (JSON or binary)
+    body_schema_ref = operation.dig('requestBody', 'content', 'application/json', 'schema')
+    has_binary_body = operation.dig('requestBody', 'content', 'application/octet-stream', 'schema')
+    has_multipart_body = operation.dig('requestBody', 'content', 'multipart/form-data', 'schema')
+    multipart_field = operation.dig('x-basecamp-multipart', 'field')
+
+    # Extract body parameters from schema
+    body_params = extract_body_params(body_schema_ref)
+
+    # Check response
+    success_response = operation.dig('responses', '200') || operation.dig('responses', '201')
+    response_schema = success_response&.dig('content', 'application/json', 'schema')
+    returns_void = response_schema.nil?
+    returns_array = response_schema&.dig('type') == 'array'
+    # Bare-array responses are usually a $ref to a single-member output alias, so
+    # the inline `type` is absent. Resolve the ref to detect them — used only for
+    # the YARD @return doc (an unpaginated bare array returns an Array, not a
+    # Hash); the pagination/body logic deliberately keys off the raw `type` so a
+    # bare array without x-basecamp-pagination stays a single request.
+    resolved_response = response_schema && response_schema['$ref'] ? resolve_schema_ref(response_schema) : response_schema
+    returns_bare_array = resolved_response&.dig('type') == 'array'
+
+    {
+      operation_id: operation_id,
+      method_name: method_name,
+      http_method: http_method,
+      path: convert_path(path),
+      description: description,
+      path_params: path_params,
+      query_params: query_params,
+      body_params: body_params,
+      has_body: body_params.any?,
+      has_binary_body: !!has_binary_body,
+      has_multipart_body: !!has_multipart_body,
+      multipart_field: multipart_field,
+      returns_void: returns_void,
+      returns_array: returns_array,
+      returns_bare_array: returns_bare_array,
+      is_mutation: http_method != 'GET',
+      has_pagination: !!operation['x-basecamp-pagination'],
+      pagination_key: operation.dig('x-basecamp-pagination', 'key')
+    }
+  end
+
+  # Extract body parameters from a schema reference
+  def extract_body_params(schema_ref)
+    return [] unless schema_ref
+
+    # Resolve $ref
+    schema = resolve_schema_ref(schema_ref)
+    return [] unless schema && schema['properties']
+
+    required_fields = schema['required'] || []
+
+    schema['properties'].map do |name, prop|
+      type = schema_to_ruby_type(prop)
+      format_hint = extract_format_hint(prop)
+      {
+        name: name,
+        type: type,
+        required: required_fields.include?(name),
+        description: prop['description'],
+        format_hint: format_hint
+      }
+    end
+  end
+
+  # Resolve a schema reference to its definition
+  def resolve_schema_ref(schema_or_ref)
+    return schema_or_ref unless schema_or_ref['$ref']
+
+    ref_path = schema_or_ref['$ref']
+    # Handle #/components/schemas/SchemaName format
+    if ref_path.start_with?('#/components/schemas/')
+      schema_name = ref_path.split('/').last
+      @schemas[schema_name]
+    else
+      nil
+    end
+  end
+
+  # Extract format hint for documentation
+  def extract_format_hint(prop)
+    return nil unless prop
+
+    # Check for x-go-type hints (dates)
+    case prop['x-go-type']
+    when 'types.Date'
+      return 'YYYY-MM-DD'
+    when 'types.DateTime', 'time.Time'
+      return 'RFC3339 (e.g., 2024-12-15T09:00:00Z)'
+    end
+
+    # Check for format field
+    case prop['format']
+    when 'date'
+      'YYYY-MM-DD'
+    when 'date-time'
+      'RFC3339 (e.g., 2024-12-15T09:00:00Z)'
+    end
+  end
+
+  def extract_method_name(operation_id)
+    return METHOD_NAME_OVERRIDES[operation_id] if METHOD_NAME_OVERRIDES.key?(operation_id)
+
+    VERB_PATTERNS.each do |pattern|
+      if operation_id.start_with?(pattern[:prefix])
+        remainder = operation_id[pattern[:prefix].length..]
+        return pattern[:method] if remainder.empty?
+
+        resource = to_snake_case(remainder)
+        return pattern[:method] if simple_resource?(resource)
+
+        return "#{pattern[:method]}_#{resource}"
+      end
+    end
+
+    to_snake_case(operation_id)
+  end
+
+  def simple_resource?(resource)
+    SIMPLE_RESOURCES.include?(resource.downcase.gsub('_', ''))
+  end
+
+  def convert_path(path)
+    # Remove /{accountId} prefix
+    path = path.sub(%r{^/\{accountId\}}, '')
+    # Convert {camelCaseParam} to #{snake_case_param}
+    path.gsub(/\{(\w+)\}/) do |_match|
+      param = ::Regexp.last_match(1)
+      snake_param = to_snake_case(param)
+      "\#{#{snake_param}}"
+    end
+  end
+
+  def schema_to_ruby_type(schema)
+    return 'Object' unless schema
+
+    # Object-valued members (e.g. a `project`/`gauge`/`schedule` envelope) are passed
+    # as a Hash. Resolve $refs and treat only object-typed schemas as Hash; a string
+    # ref such as FirstWeekDay must stay String.
+    resolved = schema['$ref'] ? resolve_schema_ref(schema) : schema
+    return 'Hash' if resolved && resolved['type'] == 'object'
+
+    case resolved&.fetch('type', nil)
+    when 'integer' then 'Integer'
+    when 'boolean' then 'Boolean'
+    when 'array' then 'Array'
+    else 'String'
+    end
+  end
+
+  def to_snake_case(str)
+    str.gsub(/([a-z\d])([A-Z])/, '\1_\2')
+       .gsub(/([A-Z]+)([A-Z][a-z])/, '\1_\2')
+       .downcase
+  end
+
+  # Folds a multi-line description into the body of a YARD `@param` tag.
+  #
+  # The first line is returned bare — the caller has already written
+  # `# @param name [Type] ` in front of it. Every later line is indented under
+  # it, EXCEPT a blank one: a paragraph break must emit a bare `#`, not `#`
+  # followed by the continuation padding. Padding an empty line is trailing
+  # whitespace, which `git diff --check` fails on, and it stayed fixed only
+  # because this lives in the generator — patching the emitted file put it back
+  # on the next `make generate`.
+  #
+  # Any trailing whitespace already in the description is stripped for the same
+  # reason: a Smithy doc comment can carry it, and the generator should not
+  # launder it into a generated file.
+  YARD_CONTINUATION_INDENT = '      #   '
+
+  def yard_param_description(text)
+    text.to_s.split("\n", -1).each_with_index.map do |line, index|
+      stripped = line.rstrip
+      if index.zero?
+        stripped
+      elsif stripped.empty?
+        '      #'
+      else
+        "#{YARD_CONTINUATION_INDENT}#{stripped}"
+      end
+    end.join("\n")
+  end
+
+  def generate_service(service)
+    lines = []
+
+    # Check if any operation uses URI encoding (binary uploads with query params)
+    needs_uri = service[:operations].any? { |op| op[:has_binary_body] && op[:query_params].any? }
+
+    lines << '# frozen_string_literal: true'
+    lines << ''
+    lines << 'require "uri"' if needs_uri
+    lines << '' if needs_uri
+    lines << 'module Basecamp'
+    lines << '  module Services'
+    lines << "    # #{service[:description]}"
+    lines << '    #'
+    lines << '    # @generated from OpenAPI spec'
+    lines << "    class #{service[:class_name]} < BaseService"
+
+    service[:operations].each do |op|
+      lines << ''
+      lines.concat(generate_method(op, service_name: service[:name]))
+    end
+
+    (HAND_WRITTEN_METHODS[service[:name]] || []).each do |method_code|
+      lines << ''
+      method_code.each_line do |l|
+        lines << (l.chomp.empty? ? '' : "      #{l.chomp}")
+      end
+    end
+
+    lines << '    end'
+    lines << '  end'
+    lines << 'end'
+    lines << ''
+
+    lines.join("\n")
+  end
+
+  def generate_method(op, service_name:)
+    lines = []
+
+    is_paginated = (op[:returns_array] || op[:has_pagination]) && !op[:pagination_key]
+    is_wrapped_paginated = op[:has_pagination] && op[:pagination_key]
+
+    # Method signature (paginated operations gain a trailing max_items: kwarg)
+    params = build_params(op, paginated: is_paginated || is_wrapped_paginated)
+
+    # YARD documentation
+    lines << "      # #{op[:description]}"
+
+    # Add @param tags for path params
+    op[:path_params].each do |p|
+      ruby_name = to_snake_case(p[:name])
+      type = p[:type] || 'Integer'
+      desc = p[:description] || "#{ruby_name.gsub('_', ' ')} ID"
+      lines << "      # @param #{ruby_name} [#{type}] #{desc}"
+    end
+
+    # Add @param tags for binary upload params
+    if op[:has_binary_body]
+      lines << '      # @param data [String] Binary file data to upload'
+      lines << '      # @param content_type [String] MIME type of the file (e.g., "application/pdf", "image/png")'
+    end
+
+    # Add @param tags for multipart upload params
+    if op[:has_multipart_body]
+      lines << '      # @param io [IO, String] File data to upload (IO object or string)'
+      lines << '      # @param filename [String] Display name for the uploaded file'
+      lines << '      # @param content_type [String] MIME type of the file (e.g., "image/png")'
+    end
+
+    # Add @param tags for body params
+    if op[:body_params]&.any?
+      op[:body_params].each do |b|
+        ruby_name = to_snake_case(b[:name])
+        type = b[:type] || 'Object'
+        type = "#{type}, nil" unless b[:required]
+        desc = yard_param_description(b[:description] || ruby_name.gsub('_', ' '))
+        format_hint = b[:format_hint] ? " (#{b[:format_hint]})" : ''
+        lines << "      # @param #{ruby_name} [#{type}] #{desc}#{format_hint}"
+      end
+    end
+
+    # Add @param tags for query params
+    op[:query_params].each do |q|
+      ruby_name = to_snake_case(q[:name])
+      type = q[:type] || 'String'
+      type = "#{type}, nil" unless q[:required]
+      desc = yard_param_description(q[:description] || ruby_name.gsub('_', ' '))
+      lines << "      # @param #{ruby_name} [#{type}] #{desc}"
+    end
+
+    # Add @param tag for the pagination cap on paginated operations
+    if is_paginated || is_wrapped_paginated
+      lines << '      # @param max_items [Integer, nil] cap on items yielded across pages; nil or non-positive means no cap'
+    end
+
+    # Add @return tag
+    if op[:returns_void]
+      lines << '      # @return [void]'
+    elsif is_wrapped_paginated
+      lines << '      # @return [Hash] wrapper fields merged with a ListEnumerator of the paginated items'
+    elsif is_paginated
+      lines << '      # @return [ListEnumerator<Hash>] lazily paginated results (#meta carries pagination metadata)'
+    elsif op[:returns_bare_array]
+      # Unpaginated bare array (single request, no Link-following) — e.g. the
+      # overdue todo/card feeds. Returns the parsed JSON array, not a Hash.
+      lines << '      # @return [Array<Hash>] response data'
+    else
+      lines << '      # @return [Hash] response data'
+    end
+
+    lines << "      def #{op[:method_name]}(#{params})"
+
+    # Build the path
+    path_expr = build_path_expression(op)
+
+    hook_kwargs = build_hook_kwargs(op, service_name)
+
+    if is_wrapped_paginated
+      pagination_key = op[:pagination_key]
+      lines << "        wrap_paginated_wrapped(key: \"#{pagination_key}\", #{hook_kwargs}) do"
+      body_lines = generate_wrapped_paginated_method_body(op, path_expr, pagination_key)
+      body_lines.each { |l| lines << "  #{l}" }
+      lines << '        end'
+    elsif is_paginated
+      # wrap_paginated fires the start hook eagerly (page 1 is fetched inside
+      # the block) and the end hook when iteration completes
+      lines << "        wrap_paginated(#{hook_kwargs}) do"
+      body_lines = generate_list_method_body(op, path_expr)
+      body_lines.each { |l| lines << "  #{l}" }
+      lines << '        end'
+    else
+      lines << "        with_operation(#{hook_kwargs}) do"
+
+      body_lines = if op[:returns_void]
+        generate_void_method_body(op, path_expr)
+      else
+        generate_get_method_body(op, path_expr)
+      end
+
+      body_lines.each { |l| lines << "  #{l}" }
+      lines << '        end'
+    end
+
+    lines << '      end'
+    lines
+  end
+
+  def build_hook_kwargs(op, service_name)
+    kwargs = []
+    kwargs << "service: \"#{service_name.downcase}\""
+    kwargs << "operation: \"#{op[:method_name]}\""
+    kwargs << "is_mutation: #{op[:is_mutation]}"
+
+    project_param = op[:path_params].find { |p| %w[projectId bucketId].include?(p[:name]) }
+    resource_param = op[:path_params].reject { |p| %w[projectId bucketId].include?(p[:name]) }
+      .select { |p| p[:name].end_with?("Id") || p[:name] == "id" }.last
+
+    kwargs << "project_id: #{to_snake_case(project_param[:name])}" if project_param
+    kwargs << "resource_id: #{to_snake_case(resource_param[:name])}" if resource_param
+
+    kwargs.join(', ')
+  end
+
+  def build_params(op, paginated: false)
+    params = []
+
+    # Path parameters as keyword args
+    op[:path_params].each do |p|
+      params << "#{to_snake_case(p[:name])}:"
+    end
+
+    # Binary upload parameters
+    if op[:has_multipart_body]
+      params << 'io:'
+      params << 'filename:'
+      params << 'content_type:'
+    elsif op[:has_binary_body]
+      params << 'data:'
+      params << 'content_type:'
+    elsif op[:has_body]
+      # Request body parameters as explicit keyword args (not **body)
+      # Required body params first (no default), then optional (with nil default)
+      required_body_params = op[:body_params].select { |b| b[:required] }
+      optional_body_params = op[:body_params].reject { |b| b[:required] }
+
+      required_body_params.each do |b|
+        params << "#{to_snake_case(b[:name])}:"
+      end
+
+      optional_body_params.each do |b|
+        params << "#{to_snake_case(b[:name])}: nil"
+      end
+    end
+
+    # Query parameters - required first (no default), then optional (with nil default)
+    required_query_params = op[:query_params].select { |q| q[:required] }
+    optional_query_params = op[:query_params].reject { |q| q[:required] }
+
+    required_query_params.each do |q|
+      params << "#{to_snake_case(q[:name])}:"
+    end
+
+    optional_query_params.each do |q|
+      params << "#{to_snake_case(q[:name])}: nil"
+    end
+
+    # Client-side pagination cap, threaded into the base paginators
+    params << 'max_items: nil' if paginated
+
+    params.join(', ')
+  end
+
+  # Build body hash expression from explicit body params
+  def build_body_expression(op)
+    return '{}' unless op[:body_params]&.any?
+
+    # Build compact_params call with all body params
+    param_mappings = op[:body_params].map do |b|
+      ruby_name = to_snake_case(b[:name])
+      # Use original API name as key (snake_case), ruby variable as value
+      "#{b[:name]}: #{ruby_name}"
+    end
+
+    "compact_params(#{param_mappings.join(', ')})"
+  end
+
+  def build_path_expression(op)
+    "\"#{op[:path]}\""
+  end
+
+  def generate_void_method_body(op, path_expr)
+    lines = []
+    http_method = op[:http_method].downcase
+
+    if op[:has_multipart_body]
+      field = op[:multipart_field] || 'file'
+      lines << "        http_#{http_method}_multipart(#{path_expr}, io: io, filename: filename, " \
+               "content_type: content_type, field: \"#{field}\")"
+    elsif op[:has_body]
+      body_expr = build_body_expression(op)
+      lines << "        http_#{http_method}(#{path_expr}, body: #{body_expr})"
+    else
+      lines << "        http_#{http_method}(#{path_expr})"
+    end
+    lines << '        nil'
+    lines
+  end
+
+  def generate_list_method_body(op, path_expr)
+    lines = []
+
+    # Build params hash for query params
+    if op[:query_params].any?
+      param_names = op[:query_params].map { |q| "#{to_snake_case(q[:name])}: #{to_snake_case(q[:name])}" }
+      lines << "        params = compact_query_params(#{param_names.join(', ')})"
+      lines << "        paginate(#{path_expr}, params: params, operation: \"#{op[:operation_id]}\", max_items: max_items)"
+    else
+      lines << "        paginate(#{path_expr}, operation: \"#{op[:operation_id]}\", max_items: max_items)"
+    end
+
+    lines
+  end
+
+  def generate_wrapped_paginated_method_body(op, path_expr, pagination_key)
+    lines = []
+
+    if op[:query_params].any?
+      param_names = op[:query_params].map { |q| "#{to_snake_case(q[:name])}: #{to_snake_case(q[:name])}" }
+      lines << "        params = compact_query_params(#{param_names.join(', ')})"
+      lines << "        paginate_wrapped(#{path_expr}, key: \"#{pagination_key}\", params: params, " \
+               "operation: \"#{op[:operation_id]}\", max_items: max_items)"
+    else
+      lines << "        paginate_wrapped(#{path_expr}, key: \"#{pagination_key}\", " \
+               "operation: \"#{op[:operation_id]}\", max_items: max_items)"
+    end
+
+    lines
+  end
+
+  def generate_get_method_body(op, path_expr)
+    lines = []
+    http_method = op[:http_method].downcase
+    # Only GETs are retry-governed in Ruby, and only Http#get accepts the
+    # operation keyword — mutations go through single_request with no retry.
+    operation_arg = http_method == 'get' ? ", operation: \"#{op[:operation_id]}\"" : ''
+
+    if op[:has_binary_body]
+      # Binary upload - use raw body and set Content-Type header
+      # post_raw accepts (path, body:, content_type:) - no params keyword
+      # Query params must be embedded in the URL
+      if op[:query_params].any?
+        # Build URL with query string
+        query_parts = op[:query_params].map { |q| "#{q[:name]}=\#{URI.encode_www_form_component(#{to_snake_case(q[:name])}.to_s)}" }
+        query_string = query_parts.join('&')
+        # Modify path_expr to include query string
+        path_expr_with_query = path_expr.sub(/"$/, "?#{query_string}\"")
+        lines << "        http_#{http_method}_raw(#{path_expr_with_query}, body: data, content_type: content_type).json"
+      else
+        lines << "        http_#{http_method}_raw(#{path_expr}, body: data, content_type: content_type).json"
+      end
+    elsif op[:has_body]
+      body_expr = build_body_expression(op)
+      lines << "        http_#{http_method}(#{path_expr}, body: #{body_expr}).json"
+    elsif op[:query_params].any?
+      param_names = op[:query_params].map { |q| "#{to_snake_case(q[:name])}: #{to_snake_case(q[:name])}" }
+      lines << "        http_#{http_method}(#{path_expr}, params: compact_query_params(#{param_names.join(', ')})#{operation_arg}).json"
+    else
+      lines << "        http_#{http_method}(#{path_expr}#{operation_arg}).json"
+    end
+
+    lines
+  end
+end
+
+# Main execution
+if __FILE__ == $PROGRAM_NAME
+  openapi_path = nil
+  output_dir = nil
+
+  i = 0
+  while i < ARGV.length
+    case ARGV[i]
+    when '--openapi'
+      openapi_path = ARGV[i + 1]
+      i += 2
+    when '--output'
+      output_dir = ARGV[i + 1]
+      i += 2
+    else
+      i += 1
+    end
+  end
+
+  openapi_path ||= File.expand_path('../../openapi.json', __dir__)
+  output_dir ||= File.expand_path('../lib/basecamp/generated/services', __dir__)
+
+  unless File.exist?(openapi_path)
+    warn "Error: OpenAPI file not found: #{openapi_path}"
+    exit 1
+  end
+
+  generator = ServiceGenerator.new(openapi_path)
+  generator.generate(output_dir)
+end

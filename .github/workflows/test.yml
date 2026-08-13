@@ -1,0 +1,971 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  lint-actions:
+    name: GitHub Actions audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          advanced-security: false
+
+  smithy:
+    uses: ./.github/workflows/smithy-verify.yml
+    permissions:
+      contents: read
+
+  provenance:
+    name: Provenance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify embedded provenance is up to date
+        run: diff -q spec/api-provenance.json go/pkg/basecamp/api-provenance.json
+
+  fixture-coverage:
+    name: Fixture coverage
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: "3.3"
+
+      # Run under LC_ALL=C so CI actually exercises the non-UTF-8-locale path
+      # (the reads are pinned to UTF-8; this proves it stays that way).
+      - name: Check fixture completeness + coverage invariant
+        run: ruby scripts/check-fixture-coverage.rb
+        env:
+          LC_ALL: C
+
+      - name: Fixture-guard self-test (negative + synthetic cases)
+        run: ruby scripts/test-check-fixture-coverage.rb
+        env:
+          LC_ALL: C
+
+  # Toolchain-light repo-wide gates from the `make check` line that previously
+  # ran on developer machines only. `make check` membership is not enforcement:
+  # a gate nothing in CI invokes is discipline, not a guarantee. These eight
+  # need bash + jq + ruby and no SDK toolchain, so they get one fast job rather
+  # than riding along inside a language job (which is how
+  # check-idempotency-parity ended up coupled to test-go).
+  #
+  # kt-check-drift belongs here despite the kt- prefix: it is jq/grep with no
+  # JVM (see its Makefile comment). The authoritative regenerate-and-diff
+  # Kotlin gate, kt-check-generated-drift, already runs in test-kotlin.
+  #
+  # One sibling deliberately lives elsewhere: behavior-model-check is a step in
+  # smithy-verify.yml, because it consumes
+  # spec/build/smithy/source/model/model.json, which only exists after
+  # `smithy build`.
+  #
+  # Invoke via `make <target>` so the recipe has exactly one definition and CI
+  # cannot drift from the Makefile.
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+  # Its own job purely to scope the token: this is the only check that needs
+  # `issues: read`, and folding it into Spec Gates would hand that permission to
+  # every gate in it. Cannot live in `make check` either — issue state needs the
+  # network, and check-bc3-route-parity's guarantee is that it has no skip path.
+  known-defect-issues:
+    name: Known-defect tracking issues are open
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: "3.3"
+
+      # Offline and first: the gate below is a no-op whenever the allowlist
+      # references no issues, so this is what proves it rejects anything.
+      - name: Self-test the known-defect gate
+        run: make test-check-known-defect-issues-open
+
+      - name: Referenced tracking issues are still open
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make check-known-defect-issues-open
+
+  spec-gates:
+    name: Spec Gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: "3.3"
+
+      - name: Spec version constants in sync with provenance
+        run: make sync-spec-version-check
+
+      - name: API version constants in sync with openapi.json
+        run: make sync-api-version-check
+
+      # Prose restates three constants (API_VERSION, the bc3 provenance pin,
+      # SPEC §19's assertion-type table). Marked spans only — spec/api-gaps/
+      # legitimately cites historical SHAs — plus a committed exact marker
+      # count, so neither deleting a marker nor adding an unrecorded one can
+      # silence the gate. The target also runs scripts/test-doc-constants.rb,
+      # which asserts the gate rejects each failure mode; the live run alone
+      # only proves it can say yes.
+      - name: Documentation constants in sync with their sources
+        run: make doc-constants-check
+        env:
+          LC_ALL: C
+
+      - name: Bucket-scoped vs flat operation parity
+        run: make check-bucket-flat-parity
+
+      - name: api-gaps registry frontmatter + allowlist schema
+        run: make validate-api-gaps
+        env:
+          LC_ALL: C
+
+      - name: Deprecation signal parity across six SDKs
+        run: make check-deprecation-parity
+
+      - name: Generated Go optional fields can represent absence
+        run: make go-check-optional-pointers
+
+      - name: Request-body enhancer reachability (synthetic specs)
+        run: make test-enhance-request-reachability
+
+      - name: Kotlin service drift (static; jq/grep, no JVM)
+        run: make kt-check-drift
+
+      # The third Go surface. go-check-drift compares generated operations
+      # against the hand-written go/pkg/basecamp wrappers; nothing watched the
+      # GROUPED client until this gate, which is how ArchiveProject and
+      # UnarchiveProject shipped missing from it through two green `make` runs.
+      #
+      # Under LC_ALL=C so CI exercises the non-UTF-8-locale path (the reads are
+      # pinned to UTF-8; this proves it stays that way). All three inputs carry
+      # non-ASCII text, so an unpinned read raises InvalidByteSequenceError and
+      # the gate fails before validating anything.
+      - name: Every operation accounted for on the Go grouped client
+        run: make check-grouped-client-coverage
+        env:
+          LC_ALL: C
+
+      # The run above only ever exercises the PASSING case. This drives
+      # adversarial inventories through the same gate, including the
+      # unaccounted-new-operation case that is the whole reason it exists.
+      - name: Grouped-client coverage gate self-test (adversarial inventories)
+        run: make test-check-grouped-client-coverage
+        env:
+          LC_ALL: C
+
+      - name: README env-var tables match what the SDKs actually read
+        run: make check-readme-env-vars
+
+      - name: README env-var gate self-test (synthetic repos)
+        run: make test-check-readme-env-vars
+
+      # Offline by construction — compares openapi.json against the vendored
+      # spec/bc3-routes.json, so it needs no bc3 checkout and no secret and
+      # therefore cannot skip. A gate that skips when its input is absent is how
+      # two 404ing routes shipped.
+      - name: SDK routes match the routes bc3 serves
+        run: make bc3-route-parity
+        env:
+          LC_ALL: C
+
+      # The run above only exercises the VALID allowlist, which proves nothing
+      # about `modeled_as` — the one disposition that asserts something is DONE.
+      # This drives adversarial substitutions through the same gate, including
+      # the interior-segment case an earlier subset rule accepted.
+      - name: bc3 route-parity gate self-test (adversarial allowlists)
+        run: make test-bc3-route-parity
+        env:
+          LC_ALL: C
+
+      # Static (bash+grep), so it runs here rather than in a language job: it
+      # reads the Makefile, this workflow, and the runner trees. Catches the
+      # #572 shape — a runner test file no target's discovery reaches.
+      - name: Conformance runner tests are all reachable
+        run: make check-runner-test-reachability
+
+      - name: Runner-test reachability guard self-test
+        run: ./scripts/check-runner-test-reachability --self-test
+
+      # The replay runners' own coverage gates fire only during a live canary,
+      # and that canary skips when its secrets are unset — so four decoder maps
+      # drifted 20 operations behind the live fixture with CI fully green
+      # (#553). This is the static answer to the same question.
+      - name: Replay decoders cover every live fixture operation
+        run: make check-replay-decoder-parity
+
+      # `smithy validate` checks `@examples` against the SMITHY model, where a
+      # member that `jsonAdd` later appends to a schema's `required` array is
+      # still natively optional. Nothing compared the projected examples to the
+      # projected schema, so #637 published two `GetTodolistOrGroup` examples
+      # that could not satisfy their own contract and a bot reviewer, not CI,
+      # caught it. The target also runs the gate's self-test, whose first case
+      # is that defect reproduced exactly.
+      #
+      # Under LC_ALL=C so CI exercises the non-UTF-8-locale path (the reads are
+      # pinned to UTF-8; this proves it stays that way).
+      - name: Published examples satisfy the schema the projection publishes
+        run: make check-projected-examples
+        env:
+          LC_ALL: C
+
+      # Advisory: prints and exits 0. The guarantee is the byte comparison that
+      # runs at the end of every job that installs anything. This is the early
+      # warning the byte comparison cannot give — it names the file and line at
+      # the commit that reintroduces a writer, while the bytes stay identical
+      # until some npm's output diverges from the committed lockfile (#612).
+      - name: Diagnostic — npm invocations that could write a lockfile
+        run: make lint-npm-lockfile-writes
+
+      # The gate's live run only exercises the passing case. Its first cut was a
+      # denylist that `npm in`, `npm ins`, and `npm --prefix <path> install` all
+      # walked through — so the rejections need their own tests.
+      - name: npm lockfile diagnostic self-test (synthetic repos)
+        run: make test-lint-npm-lockfile-writes
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+
+  test-go:
+    name: Go Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go/go.mod'
+          cache-dependency-path: |
+            go/go.sum
+            conformance/runner/go/go.sum
+
+      - name: Build
+        run: go build ./...
+
+      - name: Check service layer drift
+        run: ../scripts/check-service-drift.sh
+
+      - name: Check wrapper field-level drift
+        # Pure-Go AST check (stdlib-only module in go.work) comparing wrapper
+        # structs in go/pkg/basecamp/ against generated structs in
+        # go/pkg/generated/client.gen.go; writes nothing to the tree. Runs
+        # from repo root regardless of this job's `working-directory: go`.
+        working-directory: .
+        run: make go-check-wrapper-drift
+
+      - name: Check generated client drift
+        run: ../scripts/check-go-generated-drift.sh
+
+      - name: Check url-routes freshness
+        # url-routes.json is a generated Go artifact (//go:embed in url.go).
+        # Runs from repo root regardless of this job's `working-directory: go`.
+        working-directory: .
+        run: make url-routes-check
+
+      - name: Check auth-routable consumer invariants
+        run: ../scripts/check-auth-routable-consumers.sh
+
+      - name: Check idempotency classification parity across SDKs
+        # Repo-wide bash+jq check (jq is preinstalled on ubuntu runners). Runs
+        # from repo root regardless of this job's `working-directory: go`.
+        working-directory: .
+        run: ./scripts/check-idempotency-parity
+
+      - name: Check retry metadata parity across SDKs
+        # Repo-wide python3 check (preinstalled on ubuntu runners). Runs from
+        # repo root regardless of this job's `working-directory: go`.
+        working-directory: .
+        run: make check-retry-metadata-parity
+
+      - name: Test with coverage
+        run: |
+          # Measure coverage for hand-written code only (generated code is excluded)
+          go test -v -coverprofile=coverage.out ./pkg/basecamp/... ./pkg/types/...
+          go tool cover -func=coverage.out | tail -1
+          COVERAGE=$(go tool cover -func=coverage.out | tail -1 | awk '{print $NF}' | sed 's/%//')
+          echo "Total coverage: ${COVERAGE}%"
+          if [ "$(echo "$COVERAGE < 25" | bc -l)" -eq 1 ]; then
+            echo "::error::Coverage ${COVERAGE}% is below minimum threshold of 25%"
+            exit 1
+          fi
+
+      - name: Run Go conformance runner unit tests
+        # Unit-tests the runner's own assertion helpers. Their bounds
+        # branches never execute against a fixture that passes, so a
+        # vacuous assertion (#563) survives a fully green conformance run.
+        #
+        # Through the make target, not a command spelled out here: #572 shipped
+        # two runner suites nothing executed because the Makefile and this
+        # workflow each enumerated filenames, and neither list covered them.
+        # scripts/check-runner-test-reachability fails if either regains a
+        # filename.
+        working-directory: .
+        run: make conformance-runner-tests-go
+
+      - name: Run Go conformance tests
+        working-directory: conformance/runner/go
+        run: |
+          go build -o conformance-runner .
+          ./conformance-runner
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+
+  test-typescript:
+    name: TypeScript Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: typescript
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            typescript/package-lock.json
+            conformance/runner/typescript/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Check generated code drift
+        run: ../scripts/check-typescript-service-drift.sh
+
+      - name: Verify root pack includes compiled SDK
+        working-directory: .
+        run: |
+          FILES=$(npm pack --ignore-scripts --json | jq -r '.[0].files[].path')
+          echo "$FILES" | grep -q '^typescript/dist/index\.js$'
+          echo "$FILES" | grep -q '^typescript/dist/index\.d\.ts$'
+
+      # npx vitest run, not npm test: this skips the runner's pretest, which
+      # asserts the SDK build is fresh — a check this job satisfies by
+      # construction, having built it in the "Build" step above.
+      #
+      # The previous comment here claimed a "dist-freshness globalSetup" backed
+      # this up. There is none, and never was; the runner resolves the SDK
+      # through its package exports, so a stale dist/ would simply have been
+      # tested. conformance/runner/typescript/assert-sdk-built.mjs is that
+      # missing guard, and it now runs on every `npm test` in that directory.
+      - name: Run TypeScript conformance tests
+        working-directory: conformance/runner/typescript
+        run: |
+          npm ci
+          npx vitest run
+
+      # The freshness guard's own live run only ever sees a fresh tree. Its
+      # first cut passed any existing dist/, its second passed a build whose
+      # source had been deleted — so the rejections need synthetic trees.
+      - name: SDK build-freshness guard self-test
+        working-directory: .
+        run: make test-assert-sdk-built
+
+      # The lockfile tripwire in `make check` only ever sees lockfiles that did
+      # not move. This shows it reacts when one does — including writes made via
+      # `eval` or a command held in a variable, which no text parser resolves.
+      - name: Lockfile tripwire self-test
+        working-directory: .
+        run: make test-assert-lockfiles-unchanged
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+
+  test-ruby:
+    name: Ruby ${{ matrix.ruby }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ['3.2', '3.3', '3.4', '4.0', 'head']
+    continue-on-error: ${{ matrix.ruby == 'head' }}
+    defaults:
+      run:
+        working-directory: ruby
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        if: matrix.ruby != 'head'
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+          working-directory: ruby
+
+      - name: Set up Ruby head
+        if: matrix.ruby == 'head'
+        uses: ruby/setup-ruby@95ef2b042f9d7a56d8268cba8559e2842e2ad01b # v1.321.0
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler: default
+          bundler-cache: true
+          working-directory: ruby
+
+      - name: Lint
+        if: matrix.ruby == '3.3'
+        run: bundle exec rubocop
+
+      # Regenerate-and-diff freshness gate. Runs on the canonical matrix entry
+      # only (like Lint / conformance); the generated output is Ruby-version
+      # independent, so one entry is sufficient.
+      - name: Check generated code drift
+        if: matrix.ruby == '3.3'
+        run: ../scripts/check-ruby-service-drift.sh
+
+      - name: Test
+        run: bundle exec rake test
+
+      - name: Run Ruby conformance tests
+        if: matrix.ruby == '3.3'
+        working-directory: conformance/runner/ruby
+        run: |
+          bundle install
+          ruby runner.rb
+
+      - name: Run Ruby conformance runner unit tests
+        # Unit-tests the runner's own assertion helpers. Their bounds
+        # branches never execute against a fixture that passes, so a
+        # vacuous assertion (#563) survives a fully green conformance run.
+        # Through the make target so discovery has one definition (#572).
+        if: matrix.ruby == '3.3'
+        working-directory: .
+        run: make conformance-runner-tests-ruby
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+
+  test-python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.12', '3.13', '3.14']
+    continue-on-error: ${{ matrix.python == '3.14' }}
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Set up Python
+        run: uv python install ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: uv sync --dev --python ${{ matrix.python }}
+
+      - name: Lint
+        if: matrix.python == '3.13'
+        run: |
+          uv run ruff check src/ tests/
+          uv run ruff format --check src/ tests/
+
+      - name: Type check
+        if: matrix.python == '3.13'
+        run: uv run mypy src/basecamp/ --ignore-missing-imports
+
+      - name: Check generated code drift
+        if: matrix.python == '3.13'
+        run: |
+          uv run python scripts/generate_services.py
+          uv run python scripts/generate_metadata.py
+          uv run python scripts/generate_types.py
+          uv run ruff format src/basecamp/generated/
+          if [ -n "$(git status --porcelain -- src/basecamp/generated/)" ]; then
+            echo "::error::Generated Python code is out of date. Run 'make py-generate' and commit."
+            git status --short -- src/basecamp/generated/
+            git diff --stat -- src/basecamp/generated/ || true
+            exit 1
+          fi
+          echo "Generated code is up to date"
+
+      - name: Test with coverage
+        run: uv run pytest --cov --cov-report=term-missing --cov-fail-under=60
+
+      - name: Validate conformance fixtures against schema
+        # Authoritative enforcement of conformance/schema.json (incl. the
+        # mockResponses oneOf) and the event-feed families' schemas — the
+        # aggregate `make conformance` target is not run in PR CI, so the
+        # fixture gates are invoked here directly. uv is already installed, so
+        # these targets run check-jsonschema via uvx. Runs from repo root
+        # regardless of this job's working-directory: python.
+        if: matrix.python == '3.13'
+        working-directory: .
+        run: |
+          make conformance-fixtures-check
+          make event-feed-fixtures-check
+          make event-feed-digest-fixtures-check
+
+      - name: Run Python conformance tests
+        if: matrix.python == '3.13'
+        working-directory: conformance/runner/python
+        run: |
+          uv sync --python ${{ matrix.python }}
+          uv run --python ${{ matrix.python }} python runner.py
+
+      - name: Run Python conformance runner unit tests
+        # Unit-tests the runner's own assertion helpers. Their bounds
+        # branches never execute against a fixture that passes, so a
+        # vacuous assertion (#563) survives a fully green conformance run.
+        # Through the make target so discovery has one definition (#572); the
+        # interpreter pin moves to UV_PYTHON, uv's env spelling of --python,
+        # so the target itself stays version-agnostic.
+        if: matrix.python == '3.13'
+        working-directory: .
+        env:
+          UV_PYTHON: ${{ matrix.python }}
+        run: make conformance-runner-tests-python
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+
+  test-swift:
+    name: Swift Tests
+    runs-on: macos-15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: swift
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
+
+      - name: Check generated code drift
+        # Generation needs only the swift toolchain, so the freshness gate keys
+        # off `make swift-check-drift` (HAS_SWIFT-gated), the single source of
+        # truth. This job defaults to `working-directory: swift`; the make
+        # target must run from repo root.
+        working-directory: .
+        run: make swift-check-drift
+
+      - name: Run Swift conformance runner unit tests
+        # Unit-tests the runner's own assertion helpers. Their bounds
+        # branches never execute against a fixture that passes, so a
+        # vacuous assertion (#563) survives a fully green conformance run.
+        working-directory: .
+        run: make conformance-runner-tests-swift
+
+      - name: Run Swift conformance tests
+        # Same single-source-of-truth pattern as the drift gate: the make
+        # target carries the platform gate (IS_MACOS), and this macos runner
+        # satisfies it. The target must run from repo root.
+        working-directory: .
+        run: make conformance-swift
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+  test-kotlin:
+    name: Kotlin Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: kotlin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        with:
+          cache-provider: basic
+
+      - name: Build
+        run: ./gradlew :basecamp-sdk:build
+
+      - name: Test
+        run: ./gradlew :basecamp-sdk:check
+
+      - name: Test generator
+        # Covers the emitters themselves, not their output: the append-only
+        # constructor-order rule for options classes and the frozen roster of
+        # PaginationOptions compatibility overloads.
+        run: ./gradlew :generator:test
+
+      - name: Check generated code drift
+        # Regenerate-and-diff freshness gate via the root Make target, which
+        # runs the shared non-mutating scripts/check-kotlin-generated-drift.sh
+        # (regenerates into a temp dir; never touches the working tree). Runs
+        # from repo root regardless of this job's `working-directory: kotlin`.
+        working-directory: .
+        run: make kt-check-generated-drift
+
+      - name: Check optional array/scalar invariant
+        run: ruby ../scripts/check-kotlin-optional-arrays-and-scalars.rb
+
+      - name: Run Kotlin conformance runner unit tests
+        # Unit-tests the runner's own assertion helpers. Their bounds
+        # branches never execute against a fixture that passes, so a
+        # vacuous assertion (#563) survives a fully green conformance run.
+        # Through the make target so discovery has one definition (#572).
+        working-directory: .
+        run: make conformance-runner-tests-kotlin
+
+      - name: Run Kotlin conformance tests
+        run: ./gradlew :conformance:run
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+
+  conformance:
+    # Fan-in gate: each language's conformance suite now runs inside its own
+    # test job (warm toolchain, built SDK), which removes the serial
+    # five-toolchain job that used to start only after every test job
+    # finished. This job keeps the required-check name "Conformance Tests"
+    # stable for the main-gate ruleset and fails if any language job —
+    # which includes its conformance step — did not succeed.
+    name: Conformance Tests
+    runs-on: ubuntu-latest
+    needs: [test-go, test-typescript, test-ruby, test-kotlin, test-python, test-swift, spec-gates]
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - name: Verify per-language conformance and spec-gate results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq .
+          NOT_GREEN=$(echo "$RESULTS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"')
+          if [ -n "$NOT_GREEN" ]; then
+            echo "::error::Required upstream jobs did not succeed (language test jobs run their own conformance suites; spec-gates runs the repo-wide gates):"
+            echo "$NOT_GREEN"
+            exit 1
+          fi
+          echo "All per-language conformance suites and spec gates green"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go/go.mod'
+          cache-dependency-path: |
+            go/go.sum
+            conformance/runner/go/go.sum
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          working-directory: go
+          version: latest
+          args: --config .golangci.yml
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+
+  race:
+    name: Race Detection
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go/go.mod'
+          cache-dependency-path: |
+            go/go.sum
+            conformance/runner/go/go.sum
+
+      - name: Test with race detector
+        run: go test -race -v ./...
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean
+
+  api-compat:
+    name: API Compatibility
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go/go.mod'
+          cache-dependency-path: |
+            go/go.sum
+            conformance/runner/go/go.sum
+
+      - name: Cache Go tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/bin
+          key: go-tools-${{ runner.os }}-go${{ hashFiles('go/go.mod') }}-apidiff-v0.9.0
+
+      - name: Install apidiff
+        run: |
+          command -v apidiff || go install golang.org/x/exp/cmd/apidiff@v0.0.0-20241217172543-b2144cdd0a67
+
+      - name: Check for breaking API changes
+        run: |
+          # Store the checked-out commit — the PR-on-base merge, not the branch
+          # head. Restoring head.sha instead left go/ dirty (and failed the
+          # manifest guard) on any PR whose base had since touched go/, which a
+          # dependabot batch makes routine: the first sibling to merge changes
+          # go/go.sum under every other open PR in the group.
+          ORIG_SHA="$(git rev-parse HEAD)"
+          BASE_REF="${GITHUB_BASE_REF}"
+
+          # Export the current (PR) API
+          apidiff -w pr.api ./pkg/basecamp
+
+          # Find files added in PR that don't exist on base branch
+          # These need to be removed after checkout since git checkout doesn't remove them
+          # Strip 'go/' prefix since we're running from go/ directory
+          ADDED_FILES=$(git diff --name-only --diff-filter=A "origin/${BASE_REF}" -- . 2>/dev/null | sed 's|^go/||' || true)
+
+          # Check out the base branch to compare against
+          git checkout "origin/${BASE_REF}" -- .
+
+          # Remove files that were added in PR (they don't exist on base)
+          if [ -n "$ADDED_FILES" ]; then
+            echo "Removing files added in PR:"
+            echo "$ADDED_FILES"
+            echo "$ADDED_FILES" | xargs rm -f
+          fi
+
+          # Export the base API
+          apidiff -w base.api ./pkg/basecamp
+
+          # Restore what was checked out, using the stored SHA
+          git checkout "${ORIG_SHA}" -- .
+
+          # Compare APIs and report breaking changes
+          echo "## API Compatibility Check"
+          echo ""
+
+          if apidiff -incompatible base.api pr.api > breaking.txt 2>&1; then
+            if [ -s breaking.txt ]; then
+              echo "### Breaking Changes Detected"
+              echo ""
+              echo "The following incompatible API changes were found:"
+              echo ""
+              echo '```'
+              cat breaking.txt
+              echo '```'
+              echo ""
+              echo "If these changes are intentional, ensure they are documented in the changelog."
+              # Don't fail the build, just warn
+            else
+              echo "No breaking changes detected."
+            fi
+          else
+            echo "No breaking changes detected."
+          fi
+
+          # Also show all changes for reference
+          echo ""
+          echo "### All API Changes"
+          echo ""
+          if apidiff base.api pr.api > changes.txt 2>&1 && [ -s changes.txt ]; then
+            echo '```'
+            cat changes.txt
+            echo '```'
+          else
+            echo "No API changes detected."
+          fi
+
+      # Ground truth, and the authoritative check: the static parser predicts
+      # that nothing writes a lockfile, this observes whether anything did. A CI
+      # checkout starts pristine, so the committed tree is the baseline. Catches
+      # a manifest that was modified AND one CREATED where none was tracked, and
+      # runs on failure too, so a job cannot fail and hide what it dirtied.
+      - name: Dependency manifests unchanged by this job
+        if: always()
+        working-directory: .
+        run: ./scripts/assert-lockfiles-unchanged --verify-clean

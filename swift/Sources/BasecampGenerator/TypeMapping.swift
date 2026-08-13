@@ -1,0 +1,205 @@
+import Foundation
+
+// MARK: - Type Aliases
+
+/// Maps OpenAPI schema names to Swift type names.
+/// Format: SchemaName → (typeName, kind).
+let typeAliases: [String: (name: String, kind: String)] = [
+    "Todo": ("Todo", "entity"),
+    "Person": ("Person", "entity"),
+    "Project": ("Project", "entity"),
+    "Message": ("Message", "entity"),
+    "Comment": ("Comment", "entity"),
+    "Card": ("Card", "entity"),
+    "CardTable": ("CardTable", "entity"),
+    "CardColumn": ("CardColumn", "entity"),
+    "CardStep": ("CardStep", "entity"),
+    "Campfire": ("Campfire", "entity"),
+    "CampfireLine": ("CampfireLine", "entity"),
+    "Chatbot": ("Chatbot", "entity"),
+    "Webhook": ("Webhook", "entity"),
+    "Vault": ("Vault", "entity"),
+    "Document": ("Document", "entity"),
+    "Upload": ("Upload", "entity"),
+    "Schedule": ("Schedule", "entity"),
+    "ScheduleEntry": ("ScheduleEntry", "entity"),
+    "Recording": ("Recording", "entity"),
+    "Template": ("Template", "entity"),
+    "Todolist": ("Todolist", "entity"),
+    "Todoset": ("Todoset", "entity"),
+    "Questionnaire": ("Questionnaire", "entity"),
+    "Question": ("Question", "entity"),
+    "QuestionAnswer": ("Answer", "entity"),
+    "Subscription": ("Subscription", "entity"),
+    "Forward": ("Forward", "entity"),
+    "ForwardReply": ("ForwardReply", "entity"),
+    "Inbox": ("Inbox", "entity"),
+    "MessageBoard": ("MessageBoard", "entity"),
+    "MessageType": ("MessageType", "entity"),
+    "Event": ("Event", "entity"),
+    "Tool": ("Tool", "entity"),
+    "LineupMarker": ("LineupMarker", "entity"),
+    "ClientApproval": ("ClientApproval", "entity"),
+    "ClientCorrespondence": ("ClientCorrespondence", "entity"),
+    "ClientReply": ("ClientReply", "entity"),
+    "Boost": ("Boost", "entity"),
+    "TimelineEvent": ("TimelineEvent", "entity"),
+    "TimesheetEntry": ("TimesheetEntry", "entity"),
+]
+
+// MARK: - Property Hints
+
+/// Human-friendly descriptions for common body/query property names.
+let propertyHints: [String: String] = [
+    "content": "Text content",
+    "description": "Rich text description (HTML)",
+    "name": "Display name",
+    "title": "Title",
+    "subject": "Subject line",
+    "summary": "Summary text",
+    "notify": "Whether to send notifications to relevant people",
+    "position": "Position for ordering (1-based)",
+    "status": "Status filter",
+    "assignee_ids": "Person IDs to assign to",
+    "completion_subscriber_ids": "Person IDs to notify on completion",
+    "subscriber_ids": "Person IDs to subscribe",
+    "due_on": "Due date",
+    "starts_on": "Start date",
+    "start_date": "Start date",
+    "end_date": "End date",
+    "color": "Color value",
+    "icon": "Icon identifier",
+    "enabled": "Whether this is enabled",
+    "parent_id": "Parent resource ID to move under",
+    "admissions": "Access policy for the project",
+    "schedule_attributes": "Schedule date range settings",
+]
+
+// MARK: - Schema → Swift Type
+
+/// Maps an OpenAPI schema to a Swift type string.
+/// True when an OpenAPI schema permits an explicit JSON null
+/// (OpenAPI 3.1 `type: [..., "null"]`). Nullable controls the Swift value type
+/// (optional `T?`); it is orthogonal to `required`, which controls presence.
+/// A required-and-nullable member is `let T?` with custom Codable (see
+/// emitRequiredNullableCoding) so a missing key is rejected while an explicit
+/// null round-trips.
+func schemaIsNullable(_ schema: [String: Any]) -> Bool {
+    if let types = schema["type"] as? [Any] {
+        return types.contains { ($0 as? String) == "null" }
+    }
+    // Required-and-nullable object member: anyOf: [$ref, {type: "null"}] — the
+    // OpenAPI 3.1 spelling of a present-but-nullable reference.
+    if let anyOf = schema["anyOf"] as? [[String: Any]], anyOf.count == 2 {
+        let hasNull = anyOf.contains { ($0["type"] as? String) == "null" }
+        let hasRef = anyOf.contains { $0["$ref"] != nil }
+        return hasNull && hasRef
+    }
+    return false
+}
+
+func schemaToSwiftType(_ schema: [String: Any]) -> String {
+    if let ref = schema["$ref"] as? String {
+        return resolveRef(ref)
+    }
+    // Nullable reference union (anyOf: [$ref, {type: "null"}]): map to the
+    // referenced model; nullability is layered on by the emitter via
+    // schemaIsNullable.
+    if let anyOf = schema["anyOf"] as? [[String: Any]], anyOf.count == 2,
+       anyOf.contains(where: { ($0["type"] as? String) == "null" }),
+       let refMember = anyOf.first(where: { $0["$ref"] != nil }),
+       let ref = refMember["$ref"] as? String {
+        return resolveRef(ref)
+    }
+    // OpenAPI 3.1 nullable union (type: [..., "null"]): map the non-null member
+    // so `integer | null` -> Int, `string | null` -> String, etc. The optional
+    // `?` is added by the model emitter based on nullability, not here.
+    if let types = schema["type"] as? [Any] {
+        let nonNull = types.compactMap { $0 as? String }.first { $0 != "null" }
+        var base = schema
+        base["type"] = nonNull ?? "string"
+        return schemaToSwiftType(base)
+    }
+    let type = schema["type"] as? String ?? "String"
+    switch type {
+    case "integer":
+        // Flexible integer fields (string-or-number on the wire)
+        if let goType = schema["x-go-type"] as? String, goType.contains("FlexibleInt64") {
+            return "FlexibleInt"
+        }
+        let format = schema["format"] as? String ?? ""
+        return format == "int32" ? "Int32" : "Int"
+    case "boolean":
+        return "Bool"
+    case "number":
+        return "Double"
+    case "array":
+        if let items = schema["items"] as? [String: Any] {
+            let itemType = schemaToSwiftType(items) + (schemaIsNullable(items) ? "?" : "")
+            return "[\(itemType)]"
+        }
+        return "[Any]"
+    case "object":
+        if let additionalProperties = schema["additionalProperties"] as? [String: Any] {
+            let valueType = schemaToSwiftType(additionalProperties) + (schemaIsNullable(additionalProperties) ? "?" : "")
+            return "[String: \(valueType)]"
+        }
+        return "[String: Any]"
+    default:
+        return "String"
+    }
+}
+
+/// Maps an OpenAPI schema to the Swift type for a Codable struct property.
+/// Uses optional wrapper types for nested refs.
+func schemaToSwiftPropertyType(_ schema: [String: Any]) -> String {
+    schemaToSwiftType(schema)
+}
+
+/// Gets the entity type name for a response schema ref.
+func getEntityTypeName(_ schemaRef: String, schemas: [String: Any], paginationKey: String? = nil) -> String? {
+    // Direct entity reference
+    if typeAliases[schemaRef] != nil {
+        return typeAliases[schemaRef]!.name
+    }
+
+    // ResponseContent types — resolve to underlying entity
+    if let entitySchema = findUnderlyingEntitySchema(schemaRef, schemas: schemas, paginationKey: paginationKey) {
+        return typeAliases[entitySchema]?.name
+    }
+
+    return nil
+}
+
+/// Resolves ResponseContent wrapper schemas to their underlying entity schema name.
+func findUnderlyingEntitySchema(_ responseSchemaRef: String, schemas: [String: Any], paginationKey: String? = nil) -> String? {
+    guard let schema = schemas[responseSchemaRef] as? [String: Any] else { return nil }
+
+    // Direct $ref to known entity
+    if let ref = schema["$ref"] as? String {
+        let refName = resolveRef(ref)
+        if typeAliases[refName] != nil { return refName }
+    }
+
+    // Array with items.$ref to known entity
+    if (schema["type"] as? String) == "array",
+       let items = schema["items"] as? [String: Any],
+       let ref = items["$ref"] as? String {
+        let refName = resolveRef(ref)
+        if typeAliases[refName] != nil { return refName }
+    }
+
+    // Wrapped-pagination object: properties[key].items.$ref to known entity
+    if let key = paginationKey,
+       (schema["type"] as? String) == "object",
+       let properties = schema["properties"] as? [String: Any],
+       let keyProp = properties[key] as? [String: Any],
+       (keyProp["type"] as? String) == "array",
+       let items = keyProp["items"] as? [String: Any],
+       let ref = items["$ref"] as? String {
+        let refName = resolveRef(ref)
+        if typeAliases[refName] != nil { return refName }
+    }
+
+    return nil
+}

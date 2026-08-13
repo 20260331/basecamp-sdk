@@ -1,0 +1,144 @@
+name: Release Go SDK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Manual trigger is always dry-run (rehearsal mode)
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  smithy:
+    uses: ./.github/workflows/smithy-verify.yml
+    permissions:
+      contents: read
+
+  test:
+    name: Test before release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag is on main
+        if: github.event_name == 'push'
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        # zizmor: ignore[cache-poisoning] -- cached deps are for testing, not release artifact generation
+        with:
+          go-version-file: 'go/go.mod'
+          cache-dependency-path: 'go/go.sum'
+
+      - name: Verify module version
+        if: github.event_name == 'push'
+        run: |
+          # Ensure go.mod exists and module path is correct
+          if ! grep -q "^module github.com/basecamp/basecamp-sdk/go" go.mod; then
+            echo "Error: go.mod module path mismatch"
+            exit 1
+          fi
+
+          # Verify version.go matches the tag
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          if ! grep -q "Version = \"${VERSION}\"" pkg/basecamp/version.go; then
+            echo "::error::version.go does not match tag v${VERSION}"
+            echo "Expected: Version = \"${VERSION}\""
+            echo "Found:    $(grep 'Version =' pkg/basecamp/version.go)"
+            exit 1
+          fi
+          echo "Module verification passed"
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Run tests with race detector
+        run: go test -race ./...
+
+  # The dry run is a separate job from the real tag push so that the rehearsal
+  # never holds `contents: write`. Both jobs share the same tag-resolution logic;
+  # only this one is allowed to run on workflow_dispatch.
+  tag-dry-run:
+    name: Create Go module tag (dry run)
+    needs: [smithy, test]
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Report the go/ subdirectory tag that would be pushed
+        run: |
+          # On workflow_dispatch GITHUB_REF is refs/heads/<branch>, so the tag
+          # cannot be derived from it. Read the Go source of truth instead,
+          # mirroring how release-ruby reads version.rb and release-typescript
+          # reads package.json.
+          VERSION=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' go/pkg/basecamp/version.go)
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not read Version from go/pkg/basecamp/version.go"
+            exit 1
+          fi
+          echo "Rehearsal for version: $VERSION"
+
+          GO_TAG="go/v${VERSION}"
+          REMOTE_SHA=$(git ls-remote --tags --refs origin "$GO_TAG" | awk '{print $1}')
+          if [ -z "$REMOTE_SHA" ]; then
+            echo "Would create $GO_TAG at $GITHUB_SHA and push it."
+          elif [ "$REMOTE_SHA" = "$GITHUB_SHA" ]; then
+            echo "Tag $GO_TAG already exists at $GITHUB_SHA — would do nothing."
+          else
+            echo "Tag $GO_TAG exists at $REMOTE_SHA — would force-move it to $GITHUB_SHA."
+          fi
+
+          echo "::notice::Dry run mode - not actually publishing"
+          echo "Would publish: Go module tag ${GO_TAG} (proxy.golang.org serves github.com/basecamp/basecamp-sdk/go from it)"
+
+  tag:
+    name: Create Go module tag
+    needs: [smithy, test]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        # zizmor: ignore[artipacked] -- credentials needed for git push to create module tag
+
+      - name: Push go/ subdirectory tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          GO_TAG="go/${TAG}"
+
+          REMOTE_SHA=$(git ls-remote --tags --refs origin "$GO_TAG" | awk '{print $1}')
+          if [ -n "$REMOTE_SHA" ]; then
+            if [ "$REMOTE_SHA" = "$GITHUB_SHA" ]; then
+              echo "Tag $GO_TAG already exists at $GITHUB_SHA — nothing to do."
+              exit 0
+            else
+              echo "Tag $GO_TAG exists at $REMOTE_SHA, moving to $GITHUB_SHA"
+              git tag -f "$GO_TAG" "$GITHUB_SHA"
+              git push origin "$GO_TAG" --force
+              exit 0
+            fi
+          fi
+
+          git tag "$GO_TAG" "$GITHUB_SHA"
+          git push origin "$GO_TAG"

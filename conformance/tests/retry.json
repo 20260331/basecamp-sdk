@@ -1,0 +1,135 @@
+[
+  {
+    "name": "GET operation retries on 503",
+    "description": "Verifies that GET operations automatically retry on 503 Service Unavailable with exponential backoff",
+    "operation": "ListProjects",
+    "method": "GET",
+    "path": "/projects.json",
+    "mockResponses": [
+      {"status": 503},
+      {"status": 503},
+      {"status": 200, "body": {"projects": []}}
+    ],
+    "assertions": [
+      {"type": "requestCount", "expected": 3},
+      {"type": "delayBetweenRequests", "min": 1000},
+      {"type": "noError"}
+    ],
+    "tags": ["retry", "503"]
+  },
+  {
+    "name": "GET operation retries on 429 with Retry-After",
+    "description": "Verifies that 429 responses respect the Retry-After header",
+    "operation": "GetProject",
+    "method": "GET",
+    "path": "/projects/{projectId}",
+    "pathParams": {"projectId": 12345},
+    "mockResponses": [
+      {"status": 429, "headers": {"Retry-After": "2"}},
+      {"status": 200, "body": {"id": 12345, "name": "Test Project", "status": "active", "created_at": "2025-01-01T00:00:00Z", "updated_at": "2025-01-01T00:00:00Z", "url": "https://3.basecampapi.com/999/projects/12345.json", "app_url": "https://3.basecamp.com/999/projects/12345"}}
+    ],
+    "assertions": [
+      {"type": "requestCount", "expected": 2},
+      {"type": "delayBetweenRequests", "min": 2000},
+      {"type": "noError"}
+    ],
+    "tags": ["retry", "429", "rate-limit"]
+  },
+  {
+    "name": "POST operation does NOT retry (not idempotent)",
+    "description": "Verifies that POST operations do NOT retry since they are not idempotent",
+    "operation": "CreateProject",
+    "method": "POST",
+    "path": "/projects.json",
+    "requestBody": {"name": "New Project"},
+    "mockResponses": [
+      {"status": 503}
+    ],
+    "assertions": [
+      {"type": "requestCount", "expected": 1},
+      {"type": "statusCode", "expected": 503}
+    ],
+    "tags": ["no-retry", "post"]
+  },
+  {
+    "name": "Non-retryable error not retried",
+    "description": "Verifies that 404 errors are not retried",
+    "operation": "GetProject",
+    "method": "GET",
+    "path": "/projects/{projectId}",
+    "pathParams": {"projectId": 99999},
+    "mockResponses": [
+      {"status": 404, "body": {"error": "Not found"}}
+    ],
+    "assertions": [
+      {"type": "requestCount", "expected": 1},
+      {"type": "statusCode", "expected": 404}
+    ],
+    "tags": ["retry", "404"]
+  },
+  {
+    "name": "Retry-After HTTP-date format respected",
+    "description": "Verifies that Retry-After header with HTTP-date format is parsed and the SDK retries (2A.5). Uses a past date; the SDK should parse the date format, compute a non-positive delay, fall back to standard backoff, and still retry.",
+    "operation": "GetProject",
+    "method": "GET",
+    "path": "/projects/{projectId}",
+    "pathParams": {"projectId": 12345},
+    "mockResponses": [
+      {"status": 429, "headers": {"Retry-After": "Wed, 09 Jun 2021 10:18:14 GMT"}},
+      {"status": 200, "body": {"id": 12345, "name": "Test Project", "status": "active", "created_at": "2025-01-01T00:00:00Z", "updated_at": "2025-01-01T00:00:00Z", "url": "https://3.basecampapi.com/999/projects/12345.json", "app_url": "https://3.basecamp.com/999/projects/12345"}}
+    ],
+    "assertions": [
+      {"type": "requestCount", "expected": 2},
+      {"type": "noError"}
+    ],
+    "tags": ["retry", "retry-after-date"]
+  },
+  {
+    "name": "POST with 429 is not retried",
+    "description": "Verifies that POST operations receiving 429 are NOT retried since POST is not idempotent (2B.4)",
+    "operation": "CreateProject",
+    "method": "POST",
+    "path": "/projects.json",
+    "requestBody": {"name": "New Project"},
+    "mockResponses": [
+      {"status": 429, "headers": {"Retry-After": "1"}, "body": {"error": "Rate limit exceeded"}}
+    ],
+    "assertions": [
+      {"type": "requestCount", "expected": 1},
+      {"type": "statusCode", "expected": 429}
+    ],
+    "tags": ["no-retry", "post", "429"]
+  },
+  {
+    "name": "403 Forbidden is not retried",
+    "description": "Verifies that 403 Forbidden errors are not retried since they lack @retryable (2B.5)",
+    "operation": "GetProject",
+    "method": "GET",
+    "path": "/projects/{projectId}",
+    "pathParams": {"projectId": 12345},
+    "mockResponses": [
+      {"status": 403, "body": {"error": "Forbidden"}}
+    ],
+    "assertions": [
+      {"type": "requestCount", "expected": 1},
+      {"type": "errorCode", "expected": "forbidden"}
+    ],
+    "tags": ["retry", "non-retryable", "403"]
+  },
+  {
+    "name": "GET 500 is not retried",
+    "description": "500 is absent from every operation's declared retryOn [429, 503]; the declared set gates status retries in all six SDKs, so a 500 must surface after exactly one attempt. Pins the #485 Ruby fix: its error taxonomy calls 500 retryable, but the taxonomy must not widen the declared set for governed traffic.",
+    "operation": "GetProject",
+    "method": "GET",
+    "path": "/projects/{projectId}",
+    "pathParams": {"projectId": 12345},
+    "mockResponses": [
+      {"status": 500, "body": {"error": "Internal Server Error"}}
+    ],
+    "assertions": [
+      {"type": "requestCount", "expected": 1},
+      {"type": "statusCode", "expected": 500}
+    ],
+    "tags": ["retry", "non-retryable", "500"]
+  }
+]

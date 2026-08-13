@@ -1,0 +1,69 @@
+package com.basecamp.sdk.generated.services
+
+import com.basecamp.sdk.*
+import com.basecamp.sdk.generated.models.*
+import com.basecamp.sdk.services.BaseService
+import kotlinx.serialization.json.JsonElement
+
+/**
+ * Service for Search operations.
+ *
+ * @generated from OpenAPI spec — do not edit directly
+ */
+class SearchService(client: AccountClient) : BaseService(client) {
+
+    /**
+     * Search for content across the account
+     * @param q q
+     * @param options Optional query parameters and pagination control
+     */
+    @Suppress("DEPRECATION")
+    suspend fun search(q: String, options: SearchOptions? = null): ListResult<JsonElement> {
+        val info = OperationInfo(
+            service = "Search",
+            operation = "Search",
+            resourceType = "resource",
+            isMutation = false,
+            projectId = null,
+            resourceId = null,
+        )
+        val qs = buildQueryString(
+            "q" to q,
+            "type_names[]" to options?.typeNames,
+            "bucket_ids[]" to options?.bucketIds,
+            "creator_ids[]" to options?.creatorIds,
+            "file_type" to options?.fileType,
+            "exclude_chat" to options?.excludeChat,
+            "since" to options?.since,
+            "sort" to options?.sort,
+            "type" to options?.type,
+            "bucket_id" to options?.bucketId,
+            "creator_id" to options?.creatorId,
+            "page" to options?.page,
+        )
+        return requestPaginated(info, options?.toPaginationOptions(), {
+            httpGet("/search.json" + qs, operationName = info.operation)
+        }) { body ->
+            json.decodeFromString<List<JsonElement>>(body)
+        }
+    }
+
+    /**
+     * Get search metadata (available filter options)
+     */
+    suspend fun metadata(): JsonElement {
+        val info = OperationInfo(
+            service = "Search",
+            operation = "GetSearchMetadata",
+            resourceType = "search_metadata",
+            isMutation = false,
+            projectId = null,
+            resourceId = null,
+        )
+        return request(info, {
+            httpGet("/searches/metadata.json", operationName = info.operation)
+        }) { body ->
+            json.decodeFromString<JsonElement>(body)
+        }
+    }
+}

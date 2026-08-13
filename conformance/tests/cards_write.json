@@ -1,0 +1,977 @@
+[
+  {
+    "name": "update-sends-only-what-the-caller-addressed: one PUT, no preservation GET",
+    "description": "BC3's JSON card update is presence-aware since basecamp/bc3#12521: an omitted key is left unchanged and an explicit \"\" clears (Rails blank-cast, pinned by a BC3 server test). A sparse PUT is therefore safe on its own, so the composite no longer GETs the card to resend its due_on. One request, and due_on stays OFF the wire when the caller did not address it — echoing it back would reintroduce the read-modify-write race the GET's removal exists to eliminate. assignee_ids stays absent for a second reason that has not changed: BC3 filters incoming ids through reachable_people, so echoing them back could unassign someone who lost board access.",
+    "operation": "UpdateCard",
+    "method": "PUT",
+    "path": "/card_tables/cards/{cardId}",
+    "pathParams": {
+      "cardId": 1069479350
+    },
+    "requestBody": {
+      "title": "Renamed card"
+    },
+    "mockResponses": [
+      {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": 1069479350,
+          "status": "active",
+          "visible_to_clients": false,
+          "created_at": "2024-01-16T10:00:00.000-06:00",
+          "updated_at": "2024-01-20T15:30:00.000-06:00",
+          "title": "Implement user authentication",
+          "inherits_status": true,
+          "type": "Kanban::Card",
+          "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+          "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350",
+          "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/card1.json",
+          "subscription_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/subscription.json",
+          "position": 1,
+          "content": "<div>Add OAuth2 login flow with Google and GitHub providers</div>",
+          "description": "Add OAuth2 login flow with Google and GitHub providers",
+          "due_on": "2024-02-01",
+          "completed": false,
+          "comments_count": 2,
+          "comments_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/comments.json",
+          "completion_url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350/completion.json",
+          "parent": {
+            "id": 1069479347,
+            "title": "In Progress",
+            "type": "Kanban::Column",
+            "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/columns/1069479347.json",
+            "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/columns/1069479347"
+          },
+          "bucket": {
+            "id": 2085958499,
+            "name": "The Leto Laptop",
+            "type": "Project"
+          },
+          "creator": {
+            "id": 1049715914,
+            "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE0P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--xyz456",
+            "name": "Victor Cooper",
+            "email_address": "victor@honchodesign.com",
+            "personable_type": "User",
+            "title": "Chief Strategist",
+            "bio": "Leading product strategy",
+            "location": "Chicago, IL",
+            "created_at": "2024-01-01T08:00:00.000-06:00",
+            "updated_at": "2024-01-15T10:00:00.000-06:00",
+            "admin": true,
+            "owner": true,
+            "client": false,
+            "employee": true,
+            "time_zone": "America/Chicago",
+            "avatar_url": "https://3.basecamp-static.com/avatar/123.jpg",
+            "can_ping": true,
+            "can_manage_projects": true,
+            "can_manage_people": true
+          },
+          "assignees": [
+            {
+              "id": 1049715915,
+              "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE1P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--abc789",
+              "name": "Annie Bryan",
+              "email_address": "annie@honchodesign.com",
+              "personable_type": "User",
+              "title": "Designer",
+              "admin": false,
+              "owner": false,
+              "client": false,
+              "employee": true,
+              "time_zone": "America/Chicago",
+              "avatar_url": "https://3.basecamp-static.com/avatar/456.jpg"
+            }
+          ],
+          "completion_subscribers": [],
+          "steps": [
+            {
+              "id": 1069479360,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:05:00.000-06:00",
+              "updated_at": "2024-01-18T11:00:00.000-06:00",
+              "title": "Set up OAuth providers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479360.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479360",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step1.json",
+              "position": 1,
+              "completed": true,
+              "completed_at": "2024-01-18T11:00:00.000-06:00",
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "completer": {
+                "id": 1049715915,
+                "name": "Annie Bryan"
+              },
+              "assignees": []
+            },
+            {
+              "id": 1069479361,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:06:00.000-06:00",
+              "updated_at": "2024-01-16T10:06:00.000-06:00",
+              "title": "Implement callback handlers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479361.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479361",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step2.json",
+              "position": 2,
+              "completed": false,
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "assignees": []
+            }
+          ],
+          "description_attachments": []
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "type": "requestCount",
+        "expected": 1
+      },
+      {
+        "type": "requestMethod",
+        "expected": "PUT",
+        "index": 0
+      },
+      {
+        "type": "requestBody",
+        "path": "title",
+        "expected": "Renamed card",
+        "index": 0
+      },
+      {
+        "type": "requestBodyAbsent",
+        "path": "due_on",
+        "index": 0
+      },
+      {
+        "type": "requestBodyAbsent",
+        "path": "assignee_ids",
+        "index": 0
+      },
+      {
+        "type": "requestBodyAbsent",
+        "path": "content",
+        "index": 0
+      },
+      {
+        "type": "noError"
+      }
+    ],
+    "tags": [
+      "cards",
+      "merge-safe",
+      "due-on"
+    ]
+  },
+  {
+    "name": "update-verbatim-omits-due-on: raw update sends one PUT with no GET",
+    "description": "UpdateCardVerbatim is the server-native single PUT: exactly one request, no read-before-write, and a field omitted from the request is omitted from the body. BC3's JSON card update is presence-aware since basecamp/bc3#12521: an omitted key is left unchanged and an explicit \"\" clears (Rails blank-cast, pinned by a BC3 server test). So the server leaves an unaddressed due_on alone and this raw path is now behaviourally identical to the composite; both names are retained because they are load-bearing in the generated surface.",
+    "operation": "UpdateCardVerbatim",
+    "method": "PUT",
+    "path": "/card_tables/cards/{cardId}",
+    "pathParams": {
+      "cardId": 1069479350
+    },
+    "requestBody": {
+      "title": "Renamed card"
+    },
+    "mockResponses": [
+      {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": 1069479350,
+          "status": "active",
+          "visible_to_clients": false,
+          "created_at": "2024-01-16T10:00:00.000-06:00",
+          "updated_at": "2024-01-20T15:30:00.000-06:00",
+          "title": "Implement user authentication",
+          "inherits_status": true,
+          "type": "Kanban::Card",
+          "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+          "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350",
+          "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/card1.json",
+          "subscription_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/subscription.json",
+          "position": 1,
+          "content": "<div>Add OAuth2 login flow with Google and GitHub providers</div>",
+          "description": "Add OAuth2 login flow with Google and GitHub providers",
+          "due_on": "2024-02-01",
+          "completed": false,
+          "comments_count": 2,
+          "comments_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/comments.json",
+          "completion_url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350/completion.json",
+          "parent": {
+            "id": 1069479347,
+            "title": "In Progress",
+            "type": "Kanban::Column",
+            "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/columns/1069479347.json",
+            "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/columns/1069479347"
+          },
+          "bucket": {
+            "id": 2085958499,
+            "name": "The Leto Laptop",
+            "type": "Project"
+          },
+          "creator": {
+            "id": 1049715914,
+            "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE0P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--xyz456",
+            "name": "Victor Cooper",
+            "email_address": "victor@honchodesign.com",
+            "personable_type": "User",
+            "title": "Chief Strategist",
+            "bio": "Leading product strategy",
+            "location": "Chicago, IL",
+            "created_at": "2024-01-01T08:00:00.000-06:00",
+            "updated_at": "2024-01-15T10:00:00.000-06:00",
+            "admin": true,
+            "owner": true,
+            "client": false,
+            "employee": true,
+            "time_zone": "America/Chicago",
+            "avatar_url": "https://3.basecamp-static.com/avatar/123.jpg",
+            "can_ping": true,
+            "can_manage_projects": true,
+            "can_manage_people": true
+          },
+          "assignees": [
+            {
+              "id": 1049715915,
+              "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE1P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--abc789",
+              "name": "Annie Bryan",
+              "email_address": "annie@honchodesign.com",
+              "personable_type": "User",
+              "title": "Designer",
+              "admin": false,
+              "owner": false,
+              "client": false,
+              "employee": true,
+              "time_zone": "America/Chicago",
+              "avatar_url": "https://3.basecamp-static.com/avatar/456.jpg"
+            }
+          ],
+          "completion_subscribers": [],
+          "steps": [
+            {
+              "id": 1069479360,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:05:00.000-06:00",
+              "updated_at": "2024-01-18T11:00:00.000-06:00",
+              "title": "Set up OAuth providers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479360.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479360",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step1.json",
+              "position": 1,
+              "completed": true,
+              "completed_at": "2024-01-18T11:00:00.000-06:00",
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "completer": {
+                "id": 1049715915,
+                "name": "Annie Bryan"
+              },
+              "assignees": []
+            },
+            {
+              "id": 1069479361,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:06:00.000-06:00",
+              "updated_at": "2024-01-16T10:06:00.000-06:00",
+              "title": "Implement callback handlers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479361.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479361",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step2.json",
+              "position": 2,
+              "completed": false,
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "assignees": []
+            }
+          ],
+          "description_attachments": []
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "type": "requestCount",
+        "expected": 1
+      },
+      {
+        "type": "requestMethod",
+        "expected": "PUT",
+        "index": 0
+      },
+      {
+        "type": "requestBody",
+        "path": "title",
+        "expected": "Renamed card",
+        "index": 0
+      },
+      {
+        "type": "requestBodyAbsent",
+        "path": "due_on",
+        "index": 0
+      },
+      {
+        "type": "noError"
+      }
+    ],
+    "tags": [
+      "cards",
+      "verbatim",
+      "due-on"
+    ]
+  },
+  {
+    "name": "update-explicit-clear: an explicit empty due_on goes on the wire as \"\", with no GET",
+    "description": "BC3's JSON card update is presence-aware since basecamp/bc3#12521: an omitted key is left unchanged and an explicit \"\" clears (Rails blank-cast, pinned by a BC3 server test). So a clear MUST put the key on the wire as the empty string. Omission no longer clears — it means \"leave unchanged\", which is exactly how released SDKs (<= v0.12.0) silently no-op against production. A literal null is not an option either: it would violate body compaction (SPEC section 18) and five of the six SDKs strip nulls before the wire, whereas none of them strip \"\". This case is the cross-SDK pin for that encoding.",
+    "operation": "UpdateCard",
+    "method": "PUT",
+    "path": "/card_tables/cards/{cardId}",
+    "pathParams": {
+      "cardId": 1069479350
+    },
+    "requestBody": {
+      "due_on": ""
+    },
+    "mockResponses": [
+      {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": 1069479350,
+          "status": "active",
+          "visible_to_clients": false,
+          "created_at": "2024-01-16T10:00:00.000-06:00",
+          "updated_at": "2024-01-20T15:30:00.000-06:00",
+          "title": "Implement user authentication",
+          "inherits_status": true,
+          "type": "Kanban::Card",
+          "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+          "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350",
+          "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/card1.json",
+          "subscription_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/subscription.json",
+          "position": 1,
+          "content": "<div>Add OAuth2 login flow with Google and GitHub providers</div>",
+          "description": "Add OAuth2 login flow with Google and GitHub providers",
+          "due_on": "2024-02-01",
+          "completed": false,
+          "comments_count": 2,
+          "comments_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/comments.json",
+          "completion_url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350/completion.json",
+          "parent": {
+            "id": 1069479347,
+            "title": "In Progress",
+            "type": "Kanban::Column",
+            "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/columns/1069479347.json",
+            "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/columns/1069479347"
+          },
+          "bucket": {
+            "id": 2085958499,
+            "name": "The Leto Laptop",
+            "type": "Project"
+          },
+          "creator": {
+            "id": 1049715914,
+            "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE0P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--xyz456",
+            "name": "Victor Cooper",
+            "email_address": "victor@honchodesign.com",
+            "personable_type": "User",
+            "title": "Chief Strategist",
+            "bio": "Leading product strategy",
+            "location": "Chicago, IL",
+            "created_at": "2024-01-01T08:00:00.000-06:00",
+            "updated_at": "2024-01-15T10:00:00.000-06:00",
+            "admin": true,
+            "owner": true,
+            "client": false,
+            "employee": true,
+            "time_zone": "America/Chicago",
+            "avatar_url": "https://3.basecamp-static.com/avatar/123.jpg",
+            "can_ping": true,
+            "can_manage_projects": true,
+            "can_manage_people": true
+          },
+          "assignees": [
+            {
+              "id": 1049715915,
+              "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE1P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--abc789",
+              "name": "Annie Bryan",
+              "email_address": "annie@honchodesign.com",
+              "personable_type": "User",
+              "title": "Designer",
+              "admin": false,
+              "owner": false,
+              "client": false,
+              "employee": true,
+              "time_zone": "America/Chicago",
+              "avatar_url": "https://3.basecamp-static.com/avatar/456.jpg"
+            }
+          ],
+          "completion_subscribers": [],
+          "steps": [
+            {
+              "id": 1069479360,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:05:00.000-06:00",
+              "updated_at": "2024-01-18T11:00:00.000-06:00",
+              "title": "Set up OAuth providers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479360.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479360",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step1.json",
+              "position": 1,
+              "completed": true,
+              "completed_at": "2024-01-18T11:00:00.000-06:00",
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "completer": {
+                "id": 1049715915,
+                "name": "Annie Bryan"
+              },
+              "assignees": []
+            },
+            {
+              "id": 1069479361,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:06:00.000-06:00",
+              "updated_at": "2024-01-16T10:06:00.000-06:00",
+              "title": "Implement callback handlers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479361.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479361",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step2.json",
+              "position": 2,
+              "completed": false,
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "assignees": []
+            }
+          ],
+          "description_attachments": []
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "type": "requestCount",
+        "expected": 1
+      },
+      {
+        "type": "requestMethod",
+        "expected": "PUT",
+        "index": 0
+      },
+      {
+        "type": "requestBody",
+        "path": "due_on",
+        "expected": "",
+        "index": 0
+      },
+      {
+        "type": "noError"
+      }
+    ],
+    "tags": [
+      "cards",
+      "merge-safe",
+      "due-on",
+      "clear"
+    ]
+  },
+  {
+    "name": "update-explicit-empty-content: an explicit empty content is sent, not dropped",
+    "description": "content is presence-bearing: an explicitly-empty value clears the card body and must be sent, not dropped by body compaction. The due_on: \"\" alongside it is the explicit-clear encoding (see the explicit-clear case) and is pinned here too, so a regression in either field fails.",
+    "operation": "UpdateCard",
+    "method": "PUT",
+    "path": "/card_tables/cards/{cardId}",
+    "pathParams": {
+      "cardId": 1069479350
+    },
+    "requestBody": {
+      "content": "",
+      "due_on": ""
+    },
+    "mockResponses": [
+      {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": 1069479350,
+          "status": "active",
+          "visible_to_clients": false,
+          "created_at": "2024-01-16T10:00:00.000-06:00",
+          "updated_at": "2024-01-20T15:30:00.000-06:00",
+          "title": "Implement user authentication",
+          "inherits_status": true,
+          "type": "Kanban::Card",
+          "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+          "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350",
+          "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/card1.json",
+          "subscription_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/subscription.json",
+          "position": 1,
+          "content": "<div>Add OAuth2 login flow with Google and GitHub providers</div>",
+          "description": "Add OAuth2 login flow with Google and GitHub providers",
+          "due_on": "2024-02-01",
+          "completed": false,
+          "comments_count": 2,
+          "comments_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/comments.json",
+          "completion_url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350/completion.json",
+          "parent": {
+            "id": 1069479347,
+            "title": "In Progress",
+            "type": "Kanban::Column",
+            "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/columns/1069479347.json",
+            "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/columns/1069479347"
+          },
+          "bucket": {
+            "id": 2085958499,
+            "name": "The Leto Laptop",
+            "type": "Project"
+          },
+          "creator": {
+            "id": 1049715914,
+            "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE0P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--xyz456",
+            "name": "Victor Cooper",
+            "email_address": "victor@honchodesign.com",
+            "personable_type": "User",
+            "title": "Chief Strategist",
+            "bio": "Leading product strategy",
+            "location": "Chicago, IL",
+            "created_at": "2024-01-01T08:00:00.000-06:00",
+            "updated_at": "2024-01-15T10:00:00.000-06:00",
+            "admin": true,
+            "owner": true,
+            "client": false,
+            "employee": true,
+            "time_zone": "America/Chicago",
+            "avatar_url": "https://3.basecamp-static.com/avatar/123.jpg",
+            "can_ping": true,
+            "can_manage_projects": true,
+            "can_manage_people": true
+          },
+          "assignees": [
+            {
+              "id": 1049715915,
+              "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE1P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--abc789",
+              "name": "Annie Bryan",
+              "email_address": "annie@honchodesign.com",
+              "personable_type": "User",
+              "title": "Designer",
+              "admin": false,
+              "owner": false,
+              "client": false,
+              "employee": true,
+              "time_zone": "America/Chicago",
+              "avatar_url": "https://3.basecamp-static.com/avatar/456.jpg"
+            }
+          ],
+          "completion_subscribers": [],
+          "steps": [
+            {
+              "id": 1069479360,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:05:00.000-06:00",
+              "updated_at": "2024-01-18T11:00:00.000-06:00",
+              "title": "Set up OAuth providers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479360.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479360",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step1.json",
+              "position": 1,
+              "completed": true,
+              "completed_at": "2024-01-18T11:00:00.000-06:00",
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "completer": {
+                "id": 1049715915,
+                "name": "Annie Bryan"
+              },
+              "assignees": []
+            },
+            {
+              "id": 1069479361,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:06:00.000-06:00",
+              "updated_at": "2024-01-16T10:06:00.000-06:00",
+              "title": "Implement callback handlers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479361.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479361",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step2.json",
+              "position": 2,
+              "completed": false,
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "assignees": []
+            }
+          ],
+          "description_attachments": []
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "type": "requestCount",
+        "expected": 1
+      },
+      {
+        "type": "requestBody",
+        "path": "content",
+        "expected": "",
+        "index": 0
+      },
+      {
+        "type": "requestBody",
+        "path": "due_on",
+        "expected": "",
+        "index": 0
+      },
+      {
+        "type": "noError"
+      }
+    ],
+    "tags": [
+      "cards",
+      "merge-safe",
+      "presence"
+    ]
+  },
+  {
+    "name": "update-explicit-empty-assignees: an explicit empty assignee list is sent as []",
+    "description": "An empty non-nil assignee list means \"unassign everyone\" and must be sent as assignee_ids: [] rather than omitted. The due_on: \"\" alongside it is the explicit-clear encoding and is pinned here too. Contrast the unaddressed case, where both keys stay off the wire entirely.",
+    "operation": "UpdateCard",
+    "method": "PUT",
+    "path": "/card_tables/cards/{cardId}",
+    "pathParams": {
+      "cardId": 1069479350
+    },
+    "requestBody": {
+      "assignee_ids": [],
+      "due_on": ""
+    },
+    "mockResponses": [
+      {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "id": 1069479350,
+          "status": "active",
+          "visible_to_clients": false,
+          "created_at": "2024-01-16T10:00:00.000-06:00",
+          "updated_at": "2024-01-20T15:30:00.000-06:00",
+          "title": "Implement user authentication",
+          "inherits_status": true,
+          "type": "Kanban::Card",
+          "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+          "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350",
+          "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/card1.json",
+          "subscription_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/subscription.json",
+          "position": 1,
+          "content": "<div>Add OAuth2 login flow with Google and GitHub providers</div>",
+          "description": "Add OAuth2 login flow with Google and GitHub providers",
+          "due_on": "2024-02-01",
+          "completed": false,
+          "comments_count": 2,
+          "comments_url": "https://3.basecampapi.com/195539477/buckets/2085958499/recordings/1069479350/comments.json",
+          "completion_url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350/completion.json",
+          "parent": {
+            "id": 1069479347,
+            "title": "In Progress",
+            "type": "Kanban::Column",
+            "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/columns/1069479347.json",
+            "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/columns/1069479347"
+          },
+          "bucket": {
+            "id": 2085958499,
+            "name": "The Leto Laptop",
+            "type": "Project"
+          },
+          "creator": {
+            "id": 1049715914,
+            "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE0P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--xyz456",
+            "name": "Victor Cooper",
+            "email_address": "victor@honchodesign.com",
+            "personable_type": "User",
+            "title": "Chief Strategist",
+            "bio": "Leading product strategy",
+            "location": "Chicago, IL",
+            "created_at": "2024-01-01T08:00:00.000-06:00",
+            "updated_at": "2024-01-15T10:00:00.000-06:00",
+            "admin": true,
+            "owner": true,
+            "client": false,
+            "employee": true,
+            "time_zone": "America/Chicago",
+            "avatar_url": "https://3.basecamp-static.com/avatar/123.jpg",
+            "can_ping": true,
+            "can_manage_projects": true,
+            "can_manage_people": true
+          },
+          "assignees": [
+            {
+              "id": 1049715915,
+              "attachable_sgid": "BAh7CEkiCGdpZAY6BkVUSSIrZ2lkOi8vYmMzL1BlcnNvbi8xMDQ5NzE1OTE1P2V4cGlyZXNfaW4GOwBUSSIMcHVycG9zZQY7AFRJIg9hdHRhY2hhYmxlBjsAVEkiD2V4cGlyZXNfYXQGOwBUMA==--abc789",
+              "name": "Annie Bryan",
+              "email_address": "annie@honchodesign.com",
+              "personable_type": "User",
+              "title": "Designer",
+              "admin": false,
+              "owner": false,
+              "client": false,
+              "employee": true,
+              "time_zone": "America/Chicago",
+              "avatar_url": "https://3.basecamp-static.com/avatar/456.jpg"
+            }
+          ],
+          "completion_subscribers": [],
+          "steps": [
+            {
+              "id": 1069479360,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:05:00.000-06:00",
+              "updated_at": "2024-01-18T11:00:00.000-06:00",
+              "title": "Set up OAuth providers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479360.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479360",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step1.json",
+              "position": 1,
+              "completed": true,
+              "completed_at": "2024-01-18T11:00:00.000-06:00",
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "completer": {
+                "id": 1049715915,
+                "name": "Annie Bryan"
+              },
+              "assignees": []
+            },
+            {
+              "id": 1069479361,
+              "status": "active",
+              "visible_to_clients": false,
+              "created_at": "2024-01-16T10:06:00.000-06:00",
+              "updated_at": "2024-01-16T10:06:00.000-06:00",
+              "title": "Implement callback handlers",
+              "inherits_status": true,
+              "type": "Kanban::Step",
+              "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/steps/1069479361.json",
+              "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/steps/1069479361",
+              "bookmark_url": "https://3.basecampapi.com/195539477/my/bookmarks/step2.json",
+              "position": 2,
+              "completed": false,
+              "parent": {
+                "id": 1069479350,
+                "title": "Implement user authentication",
+                "type": "Kanban::Card",
+                "url": "https://3.basecampapi.com/195539477/buckets/2085958499/card_tables/cards/1069479350.json",
+                "app_url": "https://3.basecamp.com/195539477/buckets/2085958499/card_tables/cards/1069479350"
+              },
+              "bucket": {
+                "id": 2085958499,
+                "name": "The Leto Laptop",
+                "type": "Project"
+              },
+              "creator": {
+                "id": 1049715914,
+                "name": "Victor Cooper"
+              },
+              "assignees": []
+            }
+          ],
+          "description_attachments": []
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "type": "requestCount",
+        "expected": 1
+      },
+      {
+        "type": "requestBody",
+        "path": "assignee_ids",
+        "expected": [],
+        "index": 0
+      },
+      {
+        "type": "requestBody",
+        "path": "due_on",
+        "expected": "",
+        "index": 0
+      },
+      {
+        "type": "noError"
+      }
+    ],
+    "tags": [
+      "cards",
+      "merge-safe",
+      "presence"
+    ]
+  }
+]

@@ -1,0 +1,21 @@
+{
+  "name": "conformance-runner-typescript",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "pretest": "node assert-sdk-built.mjs",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.0",
+    "msw": "^2.12.0"
+  },
+  "dependencies": {
+    "@37signals/basecamp": "file:../../../typescript",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}

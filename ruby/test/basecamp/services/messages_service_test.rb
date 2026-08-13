@@ -1,0 +1,156 @@
+# frozen_string_literal: true
+
+# Tests for the MessagesService (generated from OpenAPI spec)
+#
+# Note: Generated services are spec-conformant:
+# - No archive(), unarchive(), trash() - use recordings.archive/unarchive/trash()
+# - No client-side validation (API validates)
+# - Single-resource paths without .json (get, update)
+
+require "test_helper"
+
+class MessagesServiceTest < Minitest::Test
+  include TestHelper
+
+  def setup
+    @account = create_account_client(account_id: "12345")
+  end
+
+  def sample_message(id: nil, subject: nil)
+    fixture = load_fixture("messages/get.json")
+    fixture.merge "id" => id || fixture["id"], "subject" => subject || fixture["subject"]
+  end
+
+  def test_list
+    messages = [ sample_message, sample_message(id: 790, subject: "Another Message") ]
+    stub_get("/12345/message_boards/456/messages.json", response_body: messages)
+
+    result = @account.messages.list(board_id: 456).to_a
+
+    assert_equal 2, result.length
+    assert_equal "We won Leto!", result[0]["subject"]
+  end
+
+  def test_list_with_sort_and_direction
+    messages = [ sample_message, sample_message(id: 790, subject: "Another Message") ]
+    url = "#{BASE_URL}/12345/message_boards/456/messages.json"
+    stub_request(:get, url)
+      .with(query: { "sort" => "created_at", "direction" => "desc" })
+      .to_return(status: 200, body: messages.to_json, headers: { "Content-Type" => "application/json" })
+
+    result = @account.messages.list(board_id: 456, sort: "created_at", direction: "desc").to_a
+
+    assert_equal 2, result.length
+    assert_requested(:get, url, query: { "sort" => "created_at", "direction" => "desc" })
+  end
+
+  def test_get
+    # Generated service: /messages/{id} without .json
+    stub_get("/12345/messages/789", response_body: sample_message(id: 789))
+
+    result = @account.messages.get(message_id: 789)
+
+    assert_equal 789, result["id"]
+    assert_equal "We won Leto!", result["subject"]
+  end
+
+  def test_create
+    new_message = sample_message(id: 999, subject: "New Post")
+    stub_post("/12345/message_boards/456/messages.json", response_body: new_message)
+
+    result = @account.messages.create(
+      board_id: 456,
+      subject: "New Post",
+      content: "<p>Content here</p>"
+    )
+
+    assert_equal 999, result["id"]
+    assert_equal "New Post", result["subject"]
+  end
+
+  def test_create_with_category
+    new_message = sample_message(id: 1000, subject: "Announcement")
+    stub_post("/12345/message_boards/456/messages.json", response_body: new_message)
+
+    result = @account.messages.create(
+      board_id: 456,
+      subject: "Announcement",
+      category_id: 1
+    )
+
+    assert_equal "Announcement", result["subject"]
+  end
+
+  def test_create_with_subscriptions
+    new_message = sample_message(id: 1001, subject: "Quiet Post")
+    stub_post("/12345/message_boards/456/messages.json", response_body: new_message)
+
+    @account.messages.create(
+      board_id: 456, subject: "Quiet Post", subscriptions: [ 111, 222 ]
+    )
+
+    assert_requested(:post, "#{BASE_URL}/12345/message_boards/456/messages.json",
+      body: hash_including("subscriptions" => [ 111, 222 ]))
+  end
+
+  # visible_to_clients is tri-state: unset omits the key (compact_params drops nil),
+  # true/false are sent verbatim. An explicit false must reach the wire. The shared
+  # generator carries this field on all six create ops; this messages coverage plus
+  # the subscriptions/all_day precedent stands in for the other five ops.
+  def test_create_omits_visible_to_clients_when_unset
+    stub_post("/12345/message_boards/456/messages.json", response_body: sample_message)
+
+    @account.messages.create(board_id: 456, subject: "Test")
+
+    assert_requested(:post, "#{BASE_URL}/12345/message_boards/456/messages.json") do |req|
+      !JSON.parse(req.body).key?("visible_to_clients")
+    end
+  end
+
+  def test_create_sends_visible_to_clients_true
+    stub_post("/12345/message_boards/456/messages.json", response_body: sample_message)
+
+    @account.messages.create(board_id: 456, subject: "Test", visible_to_clients: true)
+
+    assert_requested(:post, "#{BASE_URL}/12345/message_boards/456/messages.json",
+      body: hash_including("visible_to_clients" => true))
+  end
+
+  def test_create_sends_visible_to_clients_false
+    stub_post("/12345/message_boards/456/messages.json", response_body: sample_message)
+
+    @account.messages.create(board_id: 456, subject: "Test", visible_to_clients: false)
+
+    assert_requested(:post, "#{BASE_URL}/12345/message_boards/456/messages.json",
+      body: hash_including("visible_to_clients" => false))
+  end
+
+  def test_update
+    # Generated service: /messages/{id} without .json
+    updated_message = sample_message(subject: "Updated Subject")
+    stub_put("/12345/messages/789", response_body: updated_message)
+
+    result = @account.messages.update(message_id: 789, subject: "Updated Subject")
+
+    assert_equal "Updated Subject", result["subject"]
+  end
+
+  def test_pin
+    stub_post("/12345/recordings/789/pin.json", response_body: {})
+
+    result = @account.messages.pin(message_id: 789)
+
+    assert_nil result
+  end
+
+  def test_unpin
+    stub_delete("/12345/recordings/789/pin.json")
+
+    result = @account.messages.unpin(message_id: 789)
+
+    assert_nil result
+  end
+
+  # Note: archive(), unarchive(), trash() are on RecordingsService, not MessagesService (spec-conformant)
+  # Use @account.recordings.archive(project_id:, recording_id:) instead
+end

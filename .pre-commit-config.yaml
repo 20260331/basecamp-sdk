@@ -1,0 +1,81 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-case-conflict
+
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.11.4
+    hooks:
+      - id: golangci-lint
+        args: [--timeout=5m, --config=go/.golangci.yml]
+        files: ^go/
+
+  - repo: https://github.com/tekwizely/pre-commit-golang
+    rev: v1.0.0-rc.1
+    hooks:
+      - id: go-fmt
+        files: ^go/
+      - id: go-vet
+        files: ^go/
+      - id: go-mod-tidy
+        files: ^go/
+
+  - repo: local
+    hooks:
+      - id: go-test-short
+        name: go test -short
+        entry: bash -c 'cd go && go test -short ./...'
+        language: system
+        pass_filenames: false
+        types: [go]
+        stages: [push]
+
+      - id: typescript-lint
+        name: typescript lint
+        entry: bash -c 'cd typescript && npm run lint --if-present'
+        language: system
+        pass_filenames: false
+        files: ^typescript/.*\.(ts|tsx)$
+        stages: [commit]
+
+      - id: typescript-typecheck
+        name: typescript typecheck
+        entry: bash -c 'cd typescript && npm run typecheck --if-present'
+        language: system
+        pass_filenames: false
+        files: ^typescript/.*\.(ts|tsx)$
+        stages: [push]
+
+      - id: python-lint
+        name: python ruff check + format
+        entry: bash -c 'cd python && uv run ruff check src/ tests/ && uv run ruff format --check src/ tests/'
+        language: system
+        pass_filenames: false
+        files: ^python/.*\.py$
+        stages: [commit]
+
+      - id: python-typecheck
+        name: python mypy
+        entry: bash -c 'cd python && uv run mypy src/basecamp/ --ignore-missing-imports'
+        language: system
+        pass_filenames: false
+        files: ^python/.*\.py$
+        stages: [push]
+
+      - id: python-test-short
+        name: python test (short)
+        entry: bash -c 'cd python && uv run pytest -x -q --no-header'
+        language: system
+        pass_filenames: false
+        files: ^python/.*\.py$
+        stages: [push]

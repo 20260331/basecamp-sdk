@@ -1,0 +1,1757 @@
+#!/usr/bin/env node
+/**
+ * Generates TypeScript service classes from OpenAPI spec.
+ *
+ * Usage: npx tsx scripts/generate-services.ts [--openapi ../openapi.json] [--output src/generated/services]
+ *
+ * This generator produces Go-SDK-quality output:
+ * 1. Type exports for response and request types
+ * 2. Documented interfaces for requests/options
+ * 3. Clean method signatures with proper types
+ * 4. Rich JSDoc documentation
+ */
+
+import * as fs from "fs";
+import * as path from "path";
+import { pathToFileURL } from "url";
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface OpenAPISpec {
+  openapi: string;
+  info: { title: string; version: string };
+  paths: Record<string, PathItem>;
+  components: {
+    schemas: Record<string, Schema>;
+  };
+}
+
+interface PathItem {
+  [method: string]: Operation | undefined;
+}
+
+interface Operation {
+  operationId: string;
+  description?: string;
+  summary?: string;
+  tags?: string[];
+  parameters?: Parameter[];
+  requestBody?: RequestBody;
+  responses?: Record<string, Response>;
+  "x-basecamp-pagination"?: {
+    style: string;
+    maxPageSize?: number;
+    totalCountHeader?: string;
+    key?: string;
+  };
+  "x-basecamp-multipart"?: {
+    field: string;
+  };
+}
+
+interface Parameter {
+  name: string;
+  in: "path" | "query" | "header";
+  description?: string;
+  required?: boolean;
+  deprecated?: boolean;
+  "x-deprecated-reason"?: string;
+  schema: Schema;
+}
+
+interface RequestBody {
+  content?: {
+    "application/json"?: { schema: Schema };
+    "application/octet-stream"?: { schema: Schema };
+    "multipart/form-data"?: { schema: Schema };
+  };
+  required?: boolean;
+}
+
+interface Response {
+  description: string;
+  content?: {
+    "application/json"?: { schema: Schema };
+  };
+}
+
+interface Schema {
+  type?: string;
+  format?: string;
+  description?: string;
+  $ref?: string;
+  properties?: Record<string, Schema>;
+  required?: string[];
+  items?: Schema;
+  "x-go-type"?: string;
+  deprecated?: boolean;
+  "x-deprecated-reason"?: string;
+}
+
+interface ParsedOperation {
+  operationId: string;
+  methodName: string;
+  httpMethod: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  path: string;
+  description: string;
+  pathParams: PathParam[];
+  queryParams: QueryParam[];
+  bodySchemaRef?: string;
+  bodyProperties: BodyProperty[];
+  bodyRequired: boolean;
+  bodyContentType?: "json" | "octet-stream" | "multipart";
+  responseSchemaRef?: string;
+  returnsArray: boolean;
+  returnsVoid: boolean;
+  isMutation: boolean;
+  resourceType: string;
+  hasPagination: boolean;
+  paginationKey?: string;
+  multipartField?: string;
+  serviceName: string;
+}
+
+interface PathParam {
+  name: string;
+  type: string;
+  description?: string;
+}
+
+interface QueryParam {
+  /** Public identifier source (trailing `[]` stripped from the wire name). */
+  name: string;
+  /** Raw OpenAPI parameter name, used verbatim as the query wire key. */
+  wireName: string;
+  type: string;
+  required: boolean;
+  description?: string;
+  deprecated?: boolean;
+  /** Normalized deprecation reason (see scripts/check-deprecation-parity). */
+  deprecationReason?: string;
+}
+
+interface BodyProperty {
+  name: string;
+  type: string;
+  required: boolean;
+  description?: string;
+  formatHint?: string;
+  schema?: Schema;
+}
+
+interface ServiceDefinition {
+  name: string;
+  className: string;
+  description: string;
+  operations: ParsedOperation[];
+  types: Map<string, TypeDefinition>;
+}
+
+interface TypeDefinition {
+  name: string;
+  schemaRef: string;
+  description?: string;
+  isArray?: boolean;
+}
+
+// =============================================================================
+// Configuration
+// =============================================================================
+
+/**
+ * Tag to service name mapping overrides.
+ */
+const TAG_TO_SERVICE: Record<string, string> = {
+  "Card Tables": "CardTables",
+  Campfire: "Campfires",
+  Todos: "Todos",
+  Messages: "Messages",
+  Files: "Files",
+  Forwards: "Forwards",
+  Schedule: "Schedules",
+  People: "People",
+  Projects: "Projects",
+  Automation: "Automation",
+  ClientFeatures: "ClientFeatures",
+  Boosts: "Boosts",
+  Untagged: "Miscellaneous",
+};
+
+/**
+ * Service split configuration - some tags map to multiple service classes.
+ */
+const SERVICE_SPLITS: Record<string, Record<string, string[]>> = {
+  Campfire: {
+    Campfires: [
+      "GetCampfire", "ListCampfires",
+      "ListChatbots", "CreateChatbot", "GetChatbot", "UpdateChatbot", "DeleteChatbot",
+      "ListCampfireLines", "CreateCampfireLine", "GetCampfireLine", "UpdateCampfireLine", "DeleteCampfireLine",
+      "ListCampfireUploads", "CreateCampfireUpload",
+    ],
+  },
+  "Card Tables": {
+    CardTables: ["GetCardTable"],
+    Cards: ["GetCard", "UpdateCard", "MoveCard", "CreateCard", "ListCards"],
+    CardColumns: [
+      "GetCardColumn", "UpdateCardColumn", "SetCardColumnColor",
+      "EnableCardColumnOnHold", "DisableCardColumnOnHold",
+      "CreateCardColumn", "MoveCardColumn",
+      "SubscribeToCardColumn", "UnsubscribeFromCardColumn",
+    ],
+    CardSteps: [
+      "GetCardStep", "CreateCardStep", "UpdateCardStep", "SetCardStepCompletion",
+      "RepositionCardStep",
+    ],
+    Wormholes: ["CreateWormhole", "UpdateWormhole", "DeleteWormhole"],
+  },
+  Files: {
+    Attachments: ["CreateAttachment"],
+    Uploads: ["GetUpload", "UpdateUpload", "ListUploads", "CreateUpload", "ListUploadVersions", "CreateUploadVersion"],
+    Vaults: ["GetVault", "UpdateVault", "ListVaults", "CreateVault"],
+    Documents: ["GetDocument", "ReplaceDocument", "ListDocuments", "CreateDocument"],
+    CloudFiles: ["GetCloudFile", "CreateCloudFile", "UpdateCloudFile"],
+    GoogleDocuments: ["GetGoogleDocument", "CreateGoogleDocument", "UpdateGoogleDocument"],
+  },
+  Automation: {
+    Tools: ["GetTool", "UpdateTool", "DeleteTool", "CreateTool", "EnableTool", "DisableTool", "RepositionTool"],
+    Recordings: ["ArchiveRecording", "UnarchiveRecording", "TrashRecording", "ListRecordings"],
+    Webhooks: ["ListWebhooks", "CreateWebhook", "GetWebhook", "UpdateWebhook", "DeleteWebhook"],
+    Events: ["ListEvents"],
+    Lineup: ["CreateLineupMarker", "UpdateLineupMarker", "DeleteLineupMarker"],
+    Search: ["Search", "GetSearchMetadata"],
+    Templates: [
+      "ListTemplates", "CreateTemplate", "GetTemplate", "UpdateTemplate",
+      "DeleteTemplate", "CreateProjectFromTemplate", "GetProjectConstruction",
+    ],
+    Checkins: [
+      "GetQuestionnaire", "ListQuestions", "CreateQuestion", "GetQuestion",
+      "UpdateQuestion", "ListAnswers", "CreateAnswer", "GetAnswer", "UpdateAnswer",
+    ],
+  },
+  Messages: {
+    Messages: ["GetMessage", "UpdateMessage", "CreateMessage", "ListMessages", "PinMessage", "UnpinMessage"],
+    MessageBoards: ["GetMessageBoard"],
+    MessageTypes: ["ListMessageTypes", "CreateMessageType", "GetMessageType", "UpdateMessageType", "DeleteMessageType"],
+    Comments: ["GetComment", "UpdateComment", "ListComments", "CreateComment"],
+  },
+  People: {
+    People: ["GetMyProfile", "ListPeople", "GetPerson", "ListProjectPeople", "UpdateProjectAccess", "ListPingablePeople", "ListAssignablePeople"],
+    Subscriptions: ["GetSubscription", "Subscribe", "Unsubscribe", "UpdateSubscription"],
+  },
+  Schedule: {
+    Schedules: [
+      "GetSchedule", "UpdateScheduleSettings", "ListScheduleEntries",
+      "CreateScheduleEntry", "GetScheduleEntry", "ReplaceScheduleEntry", "GetScheduleEntryOccurrence",
+    ],
+    Timesheets: ["GetRecordingTimesheet", "GetProjectTimesheet", "GetTimesheetReport", "GetTimesheetEntry", "CreateTimesheetEntry", "UpdateTimesheetEntry", "DestroyTimesheetEntry"],
+  },
+  ClientFeatures: {
+    ClientApprovals: ["ListClientApprovals", "GetClientApproval"],
+    ClientCorrespondences: ["ListClientCorrespondences", "GetClientCorrespondence"],
+    ClientReplies: ["ListClientReplies", "GetClientReply"],
+    ClientVisibility: ["SetClientVisibility"],
+  },
+  Todos: {
+    Todos: ["ListTodos", "CreateTodo", "CreateTodosetTodo", "GetTodo", "ReplaceTodo", "CompleteTodo", "UncompleteTodo"],
+    Todolists: ["GetTodolistOrGroup", "UpdateTodolistOrGroup", "ListTodolists", "CreateTodolist", "RepositionTodolist"],
+    Todosets: ["GetTodoset"],
+    HillCharts: ["GetHillChart", "UpdateHillChartSettings"],
+    TodolistGroups: ["ListTodolistGroups", "CreateTodolistGroup", "RepositionTodolistGroup"],
+  },
+  Untagged: {
+    Timeline: ["GetProjectTimeline"],
+    Reports: ["GetProgressReport", "GetUpcomingSchedule", "GetAssignedTodos", "GetOverdueTodos", "GetPersonProgress"],
+    Checkins: [
+      "GetQuestionReminders", "ListQuestionAnswerers", "GetAnswersByPerson",
+      "UpdateQuestionNotificationSettings", "PauseQuestion", "ResumeQuestion",
+    ],
+    Todos: ["RepositionTodo"],
+    People: ["ListAssignablePeople"],
+    CardColumns: ["SubscribeToCardColumn", "UnsubscribeFromCardColumn"],
+  },
+};
+
+/**
+ * Verb extraction patterns for operationId → method name mapping.
+ */
+const VERB_PATTERNS = [
+  { prefix: "Subscribe", method: "subscribe" },
+  { prefix: "Unsubscribe", method: "unsubscribe" },
+  { prefix: "List", method: "list" },
+  { prefix: "Get", method: "get" },
+  { prefix: "Create", method: "create" },
+  { prefix: "Update", method: "update" },
+  { prefix: "Replace", method: "replace" },
+  { prefix: "Delete", method: "delete" },
+  { prefix: "Trash", method: "trash" },
+  { prefix: "Archive", method: "archive" },
+  { prefix: "Unarchive", method: "unarchive" },
+  { prefix: "Complete", method: "complete" },
+  { prefix: "Uncomplete", method: "uncomplete" },
+  { prefix: "Enable", method: "enable" },
+  { prefix: "Disable", method: "disable" },
+  { prefix: "Reposition", method: "reposition" },
+  { prefix: "Move", method: "move" },
+  { prefix: "Clone", method: "clone" },
+  { prefix: "Set", method: "set" },
+  { prefix: "Pin", method: "pin" },
+  { prefix: "Unpin", method: "unpin" },
+  { prefix: "Pause", method: "pause" },
+  { prefix: "Resume", method: "resume" },
+  { prefix: "Search", method: "search" },
+];
+
+/**
+ * Method name overrides for specific operationIds.
+ */
+const RESOURCE_TYPE_OVERRIDES: Record<string, string> = {
+  UpdateHillChartSettings: "hill_chart",
+  // The whole family reports "bookmark"; the inferred "my_bookmark" would
+  // split the list operation into its own telemetry category.
+  ListMyBookmarks: "bookmark",
+  // Creates and returns a Todo; the inferred "todoset_todo" would split
+  // loose-to-do operations into their own telemetry category.
+  CreateTodosetTodo: "todo",
+  // "Destroy" is not a verb pattern, so inference falls through to the generic
+  // "resource" and would split this delete away from the get/update siblings
+  // that report "timesheet_entry".
+  DestroyTimesheetEntry: "timesheet_entry",
+};
+
+const METHOD_NAME_OVERRIDES: Record<string, string> = {
+  GetMyProfile: "me",
+  // "bookmark(id)" reads as the action; keep the getter explicit.
+  GetBookmark: "getBookmark",
+  // "folder(id)" reads as a noun with no verb; the rest of the family is
+  // listFolders/createFolder/updateFolder/deleteFolder, and Ruby and Python
+  // already emit get_folder. Keep all six SDKs on one name.
+  GetFolder: "getFolder",
+  // "myNote()" reads oddly; keep the getter explicit.
+  GetMyNote: "getMyNote",
+  // "calendar(id)" is ambiguous with the service noun; keep the getter explicit.
+  GetCalendar: "getCalendar",
+  GetTodolistOrGroup: "get",
+  // The plain `update` name belongs to the merge-safe composite in
+  // services/todolists-extensions.ts. BC3's TodolistsController#update builds a
+  // brand-new Todolist from the permitted params and swaps it in, so a sparse
+  // verbatim PUT clears every field it omits — the public docs say so outright
+  // ("Omitting a parameter will clear its value"). The raw single-PUT path stays
+  // reachable under a name that says what it does.
+  UpdateTodolistOrGroup: "replace",
+  SetCardColumnColor: "setColor",
+  EnableCardColumnOnHold: "enableOnHold",
+  DisableCardColumnOnHold: "disableOnHold",
+  RepositionCardStep: "reposition",
+  CreateCardStep: "create",
+  UpdateCardStep: "update",
+  // The plain `update` name belongs to the presence-aware composite in
+  // services/cards-extensions.ts, whose `dueOn` also accepts null and encodes
+  // an explicit clear as `"due_on": ""`. The generated shape cannot express
+  // that: its `dueOn` is a plain optional string, and since bc3#12521 an
+  // omitted `due_on` means "leave unchanged" rather than "clear". The raw
+  // single-PUT path stays reachable under a name that says what it does.
+  UpdateCard: "updateVerbatim",
+  SetCardStepCompletion: "setCompletion",
+  GetQuestionnaire: "getQuestionnaire",
+  GetQuestion: "getQuestion",
+  GetAnswer: "getAnswer",
+  ListQuestions: "listQuestions",
+  ListAnswers: "listAnswers",
+  CreateQuestion: "createQuestion",
+  CreateAnswer: "createAnswer",
+  UpdateQuestion: "updateQuestion",
+  UpdateAnswer: "updateAnswer",
+  GetQuestionReminders: "reminders",
+  GetAnswersByPerson: "byPerson",
+  ListQuestionAnswerers: "answerers",
+  UpdateQuestionNotificationSettings: "updateNotificationSettings",
+  PauseQuestion: "pause",
+  ResumeQuestion: "resume",
+  GetSearchMetadata: "metadata",
+  Search: "search",
+  CreateProjectFromTemplate: "createProject",
+  GetProjectConstruction: "getConstruction",
+  GetRecordingTimesheet: "forRecording",
+  GetProjectTimesheet: "forProject",
+  GetTimesheetReport: "report",
+  GetTimesheetEntry: "get",
+  CreateTimesheetEntry: "create",
+  UpdateTimesheetEntry: "update",
+  DestroyTimesheetEntry: "destroy",
+  GetProgressReport: "progress",
+  GetUpcomingSchedule: "upcoming",
+  GetAssignedTodos: "assigned",
+  GetOverdueTodos: "overdue",
+  GetPersonProgress: "personProgress",
+  SubscribeToCardColumn: "subscribeToColumn",
+  UnsubscribeFromCardColumn: "unsubscribeFromColumn",
+  ListRecordingBoosts: "listForRecording",
+  CreateRecordingBoost: "createForRecording",
+  ListEventBoosts: "listForEvent",
+  CreateEventBoost: "createForEvent",
+  SetClientVisibility: "setVisibility",
+  GetCampfire: "get",
+  ListCampfires: "list",
+  ListChatbots: "listChatbots",
+  CreateChatbot: "createChatbot",
+  GetChatbot: "getChatbot",
+  UpdateChatbot: "updateChatbot",
+  DeleteChatbot: "deleteChatbot",
+  ListCampfireLines: "listLines",
+  CreateCampfireLine: "createLine",
+  GetCampfireLine: "getLine",
+  UpdateCampfireLine: "updateLine",
+  DeleteCampfireLine: "deleteLine",
+  ListCampfireUploads: "listUploads",
+  CreateCampfireUpload: "createUpload",
+  GetForward: "get",
+  ListForwards: "list",
+  GetForwardReply: "getReply",
+  ListForwardReplies: "listReplies",
+  GetInbox: "getInbox",
+  GetUpload: "get",
+  UpdateUpload: "update",
+  ListUploads: "list",
+  CreateUpload: "create",
+  ListUploadVersions: "listVersions",
+  CreateUploadVersion: "createVersion",
+  GetMessage: "get",
+  UpdateMessage: "update",
+  CreateMessage: "create",
+  ListMessages: "list",
+  PinMessage: "pin",
+  UnpinMessage: "unpin",
+  GetMessageBoard: "get",
+  GetMessageType: "get",
+  UpdateMessageType: "update",
+  CreateMessageType: "create",
+  ListMessageTypes: "list",
+  DeleteMessageType: "delete",
+  GetComment: "get",
+  UpdateComment: "update",
+  CreateComment: "create",
+  ListComments: "list",
+  ListProjectPeople: "listForProject",
+  ListPingablePeople: "listPingable",
+  ListAssignablePeople: "listAssignable",
+  GetSchedule: "get",
+  UpdateScheduleSettings: "updateSettings",
+  GetScheduleEntry: "getEntry",
+  // The plain `updateEntry` name belongs to the merge-safe composite; the raw
+  // single-PUT path keeps a name that says what it does. Without the override
+  // the algorithm yields a bare `replace` (scheduleentry is a SIMPLE_RESOURCE),
+  // which reads as "replace the schedule". See #547.
+  ReplaceScheduleEntry: "replaceEntry",
+  CreateScheduleEntry: "createEntry",
+  ListScheduleEntries: "listEntries",
+  GetScheduleEntryOccurrence: "getEntryOccurrence",
+  GetHillChart: "get",
+  UpdateHillChartSettings: "updateSettings",
+};
+
+/**
+ * Maps actual OpenAPI schema names to friendly type names.
+ * Format: SchemaName -> [TypeAlias, kind]
+ * These are the actual entity schemas, not ResponseContent wrappers.
+ */
+const TYPE_ALIASES: Record<string, [string, "response" | "request" | "entity"]> = {
+  // Core entity types (matching actual OpenAPI schema names)
+  Todo: ["Todo", "entity"],
+  Person: ["Person", "entity"],
+  Project: ["Project", "entity"],
+  Message: ["Message", "entity"],
+  Comment: ["Comment", "entity"],
+  Card: ["Card", "entity"],
+  CardTable: ["CardTable", "entity"],
+  CardColumn: ["CardColumn", "entity"],
+  CardStep: ["CardStep", "entity"],
+  Wormhole: ["Wormhole", "entity"],
+  Campfire: ["Campfire", "entity"],
+  CampfireLine: ["CampfireLine", "entity"],
+  Chatbot: ["Chatbot", "entity"],
+  Webhook: ["Webhook", "entity"],
+  Vault: ["Vault", "entity"],
+  Document: ["Document", "entity"],
+  Upload: ["Upload", "entity"],
+  UploadVersion: ["UploadVersion", "entity"],
+  CloudFile: ["CloudFile", "entity"],
+  GoogleDocument: ["GoogleDocument", "entity"],
+  Schedule: ["Schedule", "entity"],
+  ScheduleEntry: ["ScheduleEntry", "entity"],
+  Recording: ["Recording", "entity"],
+  Template: ["Template", "entity"],
+  // No TodolistGroup entry: #544 folded it and the TodolistOrGroup union into
+  // the one flat Todolist, so the TodolistGroups service's list/create carry
+  // Todolist. Every lookup here is keyed by a literal schema name resolved from
+  // the OpenAPI document, and that name no longer exists in it.
+  Todolist: ["Todolist", "entity"],
+  Todoset: ["Todoset", "entity"],
+  Questionnaire: ["Questionnaire", "entity"],
+  Question: ["Question", "entity"],
+  QuestionAnswer: ["Answer", "entity"], // Schema is QuestionAnswer, type alias is Answer
+  Subscription: ["Subscription", "entity"],
+  Bookmark: ["Bookmark", "entity"],
+  BookmarkStatus: ["BookmarkStatus", "entity"],
+  Folder: ["Folder", "entity"],
+  FolderWithProjects: ["FolderWithProjects", "entity"],
+  Draft: ["Draft", "entity"],
+  MyNote: ["MyNote", "entity"],
+  Calendar: ["Calendar", "entity"],
+  Forward: ["Forward", "entity"],
+  ForwardReply: ["ForwardReply", "entity"],
+  Inbox: ["Inbox", "entity"],
+  MessageBoard: ["MessageBoard", "entity"],
+  MessageType: ["MessageType", "entity"],
+  Event: ["Event", "entity"],
+  Tool: ["Tool", "entity"],
+  LineupMarker: ["LineupMarker", "entity"],
+  ClientApproval: ["ClientApproval", "entity"],
+  ClientCorrespondence: ["ClientCorrespondence", "entity"],
+  ClientReply: ["ClientReply", "entity"],
+  TimelineEvent: ["TimelineEvent", "entity"],
+  Notification: ["Notification", "entity"],
+  Boost: ["Boost", "entity"],
+  EverythingFile: ["EverythingFile", "entity"],
+  BucketTodosGroup: ["BucketTodosGroup", "entity"],
+  BucketCardsGroup: ["BucketCardsGroup", "entity"],
+  TimesheetEntry: ["TimesheetEntry", "entity"],
+};
+
+/**
+ * Human-friendly descriptions for common body/query property names.
+ * Used when the OpenAPI spec has no description for a field.
+ */
+const PROPERTY_HINTS: Record<string, string> = {
+  content: "Text content",
+  description: "Rich text description (HTML)",
+  name: "Display name",
+  title: "Title",
+  subject: "Subject line",
+  summary: "Summary text",
+  notify: "Whether to send notifications to relevant people",
+  position: "Position for ordering (1-based)",
+  status: "Status filter",
+  assignee_ids: "Person IDs to assign to",
+  completion_subscriber_ids: "Person IDs to notify on completion",
+  subscriber_ids: "Person IDs to subscribe",
+  due_on: "Due date",
+  starts_on: "Start date",
+  start_date: "Start date",
+  end_date: "End date",
+  color: "Color value",
+  icon: "Icon identifier",
+  enabled: "Whether this is enabled",
+  parent_id: "Parent resource ID to move under",
+  admissions: "Access policy for the project",
+  schedule_attributes: "Schedule date range settings",
+};
+
+/**
+ * Description enrichments for common method description patterns.
+ * Applied as post-processing to strip implementation details and add context.
+ */
+function enrichDescription(desc: string): string {
+  // Strip "(returns 204 No Content)" — implementation detail, not useful for devs
+  let result = desc.replace(/\s*\(returns \d+ [^)]+\)/g, "");
+  // Add behavioral context for trash operations
+  if (/^Trash /i.test(result) && !/can be recovered/i.test(result)) {
+    result += ". Trashed items can be recovered.";
+  }
+  return result;
+}
+
+// =============================================================================
+// Schema Utilities
+// =============================================================================
+
+let globalSchemas: Record<string, Schema> = {};
+
+function setSchemas(schemas: Record<string, Schema>) {
+  globalSchemas = schemas;
+}
+
+function resolveRef(ref: string): string {
+  return ref.split("/").pop() || "";
+}
+
+function getSchemaProperties(schemaRef: string): { properties: Record<string, Schema>; required: string[] } {
+  const schema = globalSchemas[schemaRef];
+  if (!schema) return { properties: {}, required: [] };
+  return {
+    properties: schema.properties || {},
+    required: schema.required || [],
+  };
+}
+
+function schemaToTsType(schema: Schema, forInterface = false): string {
+  if (schema.$ref) {
+    const refName = resolveRef(schema.$ref);
+    // For interface properties, use full component reference since we don't import all types
+    return forInterface ? `components["schemas"]["${refName}"]` : refName;
+  }
+  switch (schema.type) {
+    case "integer":
+      return "number";
+    case "boolean":
+      return "boolean";
+    case "array":
+      return schema.items ? `${schemaToTsType(schema.items, forInterface)}[]` : "unknown[]";
+    case "object":
+      return "Record<string, unknown>";
+    default:
+      return "string";
+  }
+}
+
+function getFormatHint(schema: Schema): string | undefined {
+  if (schema["x-go-type"] === "types.Date") return "YYYY-MM-DD";
+  if (schema["x-go-type"] === "time.Time" || schema["x-go-type"] === "types.DateTime") {
+    return "RFC3339 (e.g., 2024-12-15T09:00:00Z)";
+  }
+  if (schema.format === "date") return "YYYY-MM-DD";
+  if (schema.format === "date-time") return "RFC3339";
+  return undefined;
+}
+
+/**
+ * Detect pipe-separated enum descriptions like "active|archived|trashed"
+ * and return a TypeScript union type string, or null if not an enum pattern.
+ */
+function parsePipeEnum(description: string | undefined): string | null {
+  if (!description) return null;
+  // Must match pattern: word|word (with optional more |word segments)
+  // Words can contain colons (e.g., "Kanban::Card") and underscores
+  const parts = description.split("|");
+  if (parts.length < 2) return null;
+  // Each part must be a non-empty value without spaces
+  if (!parts.every((p) => p.length > 0 && !p.includes(" "))) return null;
+  return parts.map((p) => `"${p}"`).join(" | ");
+}
+
+// =============================================================================
+// Parsing Functions
+// =============================================================================
+
+function extractMethodName(operationId: string): string {
+  if (METHOD_NAME_OVERRIDES[operationId]) {
+    return METHOD_NAME_OVERRIDES[operationId];
+  }
+
+  for (const { prefix, method } of VERB_PATTERNS) {
+    if (operationId.startsWith(prefix)) {
+      const remainder = operationId.slice(prefix.length);
+      if (!remainder) return method;
+      const resource = remainder.charAt(0).toLowerCase() + remainder.slice(1);
+      if (isSimpleResource(resource)) return method;
+      return method === "get" ? resource : method + remainder;
+    }
+  }
+
+  return operationId.charAt(0).toLowerCase() + operationId.slice(1);
+}
+
+function isSimpleResource(resource: string): boolean {
+  const simpleResources = [
+    "todo", "todos", "todolist", "todolists", "todoset",
+    "message", "messages", "comment", "comments",
+    "card", "cards", "cardtable", "cardcolumn", "cardstep", "column", "step",
+    "project", "projects", "person", "people",
+    "campfire", "campfires", "chatbot", "chatbots",
+    "webhook", "webhooks", "vault", "vaults", "document", "documents",
+    "upload", "uploads", "schedule", "scheduleentry", "scheduleentries",
+    "event", "events", "recording", "recordings", "template", "templates",
+    "attachment", "question", "questions", "answer", "answers", "questionnaire",
+    "subscription", "forward", "forwards", "inbox", "messageboard",
+    "messagetype", "messagetypes", "tool", "lineupmarker",
+    "clientapproval", "clientapprovals", "clientcorrespondence", "clientcorrespondences",
+    "clientreply", "clientreplies", "forwardreply", "forwardreplies",
+    "campfireline", "campfirelines", "todolistgroup", "todolistgroups",
+    "todolistorgroup", "uploadversions",
+    "boost", "boosts",
+    "hillchart", "hillcharts",
+    "wormhole", "wormholes",
+  ];
+  return simpleResources.includes(resource.toLowerCase());
+}
+
+function extractResourceType(operationId: string): string {
+  if (RESOURCE_TYPE_OVERRIDES[operationId]) {
+    return RESOURCE_TYPE_OVERRIDES[operationId];
+  }
+  for (const { prefix } of VERB_PATTERNS) {
+    if (operationId.startsWith(prefix)) {
+      const remainder = operationId.slice(prefix.length);
+      if (!remainder) return "resource";
+      const snakeCase = remainder
+        .replace(/([A-Z])/g, "_$1")
+        .toLowerCase()
+        .replace(/^_/, "");
+      return snakeCase.replace(/([^s])s$/, "$1");
+    }
+  }
+  return "resource";
+}
+
+function convertPath(path: string): string {
+  return path.replace(/^\/{accountId}/, "");
+}
+
+function isVoidResponse(responses: Record<string, Response> | undefined): boolean {
+  if (!responses) return true;
+  const successResponse = responses["200"] || responses["201"] || responses["204"];
+  if (!successResponse) return true;
+  return !successResponse.content?.["application/json"];
+}
+
+function parseOperation(
+  path: string,
+  method: string,
+  operation: Operation,
+): ParsedOperation {
+  const httpMethod = method.toUpperCase() as "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+  const operationId = operation.operationId;
+  const methodName = extractMethodName(operationId);
+  const description = operation.description || operation.summary || `${methodName} operation`;
+
+  // Path parameters
+  const pathParams: PathParam[] = (operation.parameters || [])
+    .filter((p) => p.in === "path" && p.name !== "accountId")
+    .map((p) => ({
+      name: p.name,
+      type: p.schema.type === "integer" ? "number" : "string",
+      description: p.description,
+    }));
+
+  // Query parameters
+  const queryParams: QueryParam[] = (operation.parameters || [])
+    .filter((p) => p.in === "query")
+    .map((p) => {
+      const enumUnion = parsePipeEnum(p.description) || parsePipeEnum(p.schema.description);
+      // Bracketed array wire names (e.g. `bucket_ids[]`) carry the `[]` only on
+      // the wire key; the public identifier strips it. See Approach A.
+      const wireName = p.name;
+      const name = wireName.replace(/\[\]$/, "");
+      return {
+        name,
+        wireName,
+        type: enumUnion || schemaToTsType(p.schema),
+        required: p.required || false,
+        description: p.description,
+        deprecated: p.deprecated || p.schema.deprecated || false,
+        deprecationReason: p["x-deprecated-reason"] || p.schema["x-deprecated-reason"],
+      };
+    });
+
+  // Request body
+  let bodySchemaRef: string | undefined;
+  let bodyProperties: BodyProperty[] = [];
+  let bodyRequired = false;
+  let bodyContentType: "json" | "octet-stream" | "multipart" | undefined;
+
+  if (operation.requestBody?.content?.["application/json"]?.schema) {
+    const schema = operation.requestBody.content["application/json"].schema;
+    bodyRequired = operation.requestBody.required || false;
+    bodyContentType = "json";
+    if (schema.$ref) {
+      bodySchemaRef = resolveRef(schema.$ref);
+      const { properties, required } = getSchemaProperties(bodySchemaRef);
+      bodyProperties = Object.entries(properties).map(([name, prop]) => {
+        const enumUnion = parsePipeEnum(prop.description);
+        return {
+          name,
+          type: enumUnion || schemaToTsType(prop, true), // forInterface=true to use full schema refs
+          required: required.includes(name),
+          description: prop.description,
+          formatHint: getFormatHint(prop),
+          schema: prop, // preserve original schema/$ref for example rendering
+        };
+      });
+    }
+  } else if (operation.requestBody?.content?.["multipart/form-data"]?.schema) {
+    bodyRequired = operation.requestBody.required || false;
+    bodyContentType = "multipart";
+  } else if (operation.requestBody?.content?.["application/octet-stream"]?.schema) {
+    bodyRequired = operation.requestBody.required || false;
+    bodyContentType = "octet-stream";
+  }
+
+  // Response
+  let responseSchemaRef: string | undefined;
+  let returnsArray = false;
+  const successResponse = operation.responses?.["200"] || operation.responses?.["201"];
+  if (successResponse?.content?.["application/json"]?.schema) {
+    const schema = successResponse.content["application/json"].schema;
+    if (schema.$ref) {
+      responseSchemaRef = resolveRef(schema.$ref);
+      // Check if the referenced schema is an array type
+      const resolvedSchema = globalSchemas[responseSchemaRef];
+      if (resolvedSchema?.type === "array") {
+        returnsArray = true;
+      }
+    }
+    if (schema.type === "array") {
+      returnsArray = true;
+    }
+  }
+
+  const returnsVoid = isVoidResponse(operation.responses);
+  const isMutation = httpMethod !== "GET";
+  const resourceType = extractResourceType(operationId);
+  const hasPagination = !!operation["x-basecamp-pagination"];
+  const paginationKey = operation["x-basecamp-pagination"]?.key;
+  const multipartField = operation["x-basecamp-multipart"]?.field;
+
+  return {
+    operationId,
+    methodName,
+    httpMethod,
+    path: convertPath(path),
+    description,
+    pathParams,
+    queryParams,
+    bodySchemaRef,
+    bodyProperties,
+    bodyRequired,
+    bodyContentType,
+    responseSchemaRef,
+    returnsArray,
+    returnsVoid,
+    isMutation,
+    resourceType,
+    hasPagination,
+    paginationKey,
+    multipartField,
+    serviceName: "", // filled in by groupOperations
+  };
+}
+
+function groupOperations(spec: OpenAPISpec): Map<string, ServiceDefinition> {
+  const services = new Map<string, ServiceDefinition>();
+
+  for (const [path, pathItem] of Object.entries(spec.paths)) {
+    for (const method of ["get", "post", "put", "patch", "delete"]) {
+      const operation = pathItem[method];
+      if (!operation) continue;
+
+      const tag = operation.tags?.[0] || "Untagged";
+      const parsed = parseOperation(path, method, operation);
+
+      // Determine service
+      let serviceName: string;
+      if (SERVICE_SPLITS[tag]) {
+        let found = false;
+        for (const [svc, opIds] of Object.entries(SERVICE_SPLITS[tag])) {
+          if (opIds.includes(operation.operationId)) {
+            serviceName = svc;
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          serviceName = TAG_TO_SERVICE[tag] || tag.replace(/\s+/g, "");
+        }
+      } else {
+        serviceName = TAG_TO_SERVICE[tag] || tag.replace(/\s+/g, "");
+      }
+
+      if (!services.has(serviceName)) {
+        services.set(serviceName, {
+          name: serviceName,
+          className: `${serviceName}Service`,
+          description: `Service for ${serviceName} operations`,
+          operations: [],
+          types: new Map(),
+        });
+      }
+
+      const service = services.get(serviceName)!;
+      parsed.serviceName = serviceName;
+      service.operations.push(parsed);
+
+      // Collect types used by this service
+      if (parsed.responseSchemaRef) {
+        const entityName = getEntityTypeName(parsed.responseSchemaRef);
+        if (entityName) {
+          service.types.set(entityName, {
+            name: entityName,
+            schemaRef: parsed.responseSchemaRef,
+            isArray: parsed.returnsArray,
+          });
+        }
+      }
+    }
+  }
+
+  return services;
+}
+
+function getEntityTypeName(schemaRef: string, paginationKey?: string): string | null {
+  // Direct entity reference - check if schema is in TYPE_ALIASES
+  if (TYPE_ALIASES[schemaRef]) {
+    return TYPE_ALIASES[schemaRef][0];
+  }
+
+  // For ResponseContent types, resolve to the underlying entity schema
+  const entitySchema = findUnderlyingEntitySchema(schemaRef, paginationKey);
+  if (entitySchema && TYPE_ALIASES[entitySchema]) {
+    return TYPE_ALIASES[entitySchema][0];
+  }
+
+  return null;
+}
+
+// =============================================================================
+// Code Generation
+// =============================================================================
+
+function generateService(service: ServiceDefinition): string {
+  const lines: string[] = [];
+  const serviceName = service.name;
+
+  // File header
+  lines.push(`/**`);
+  lines.push(` * ${serviceName} service for the Basecamp API.`);
+  lines.push(` *`);
+  lines.push(` * @generated from OpenAPI spec - do not edit directly`);
+  lines.push(` */`);
+  lines.push(``);
+  lines.push(`import { BaseService } from "../../services/base.js";`);
+  lines.push(`import type { components } from "../schema.js";`);
+
+  // Import ListResult and PaginationOptions if any operation uses pagination
+  const needsPagination = service.operations.some((op) =>
+    (op.hasPagination && op.returnsArray) || (op.hasPagination && !op.returnsArray && op.paginationKey)
+  );
+  if (needsPagination) {
+    lines.push(`import { ListResult } from "../../pagination.js";`);
+    lines.push(`import type { PaginationOptions } from "../../pagination.js";`);
+  }
+
+  // Import Errors if any operation has validation
+  const needsValidation = service.operations.some((op) =>
+    op.bodyProperties.some((p) => {
+      if (!p.required) return p.formatHint === "YYYY-MM-DD";
+      const baseType = p.type.replace(/\s*\|.*/g, "").replace(/"/g, "").trim();
+      return baseType !== "boolean" && baseType !== "number";
+    })
+  );
+  if (needsValidation) {
+    lines.push(`import { Errors } from "../../errors.js";`);
+  }
+
+  lines.push(``);
+
+  // Type exports
+  lines.push(`// =============================================================================`);
+  lines.push(`// Types`);
+  lines.push(`// =============================================================================`);
+  lines.push(``);
+
+  // Collect all unique types needed
+  const typeExports = collectTypeExports(service);
+  for (const typeExport of typeExports) {
+    lines.push(typeExport);
+  }
+
+  // Request/Options interfaces
+  const requestInterfaces = generateRequestInterfaces(service);
+  if (requestInterfaces.length > 0) {
+    lines.push(``);
+    lines.push(...requestInterfaces);
+  }
+
+  // Service class
+  lines.push(``);
+  lines.push(`// =============================================================================`);
+  lines.push(`// Service`);
+  lines.push(`// =============================================================================`);
+  lines.push(``);
+  lines.push(`/**`);
+  lines.push(` * Service for ${serviceName} operations.`);
+  lines.push(` */`);
+  lines.push(`export class ${service.className} extends BaseService {`);
+
+  for (const op of service.operations) {
+    lines.push(``);
+    lines.push(...generateMethod(op, serviceName));
+  }
+
+  lines.push(`}`);
+
+  return lines.join("\n");
+}
+
+function collectTypeExports(service: ServiceDefinition): string[] {
+  const exports: string[] = [];
+  const added = new Set<string>();
+
+  // Collect response types
+  for (const op of service.operations) {
+    if (op.responseSchemaRef && !op.returnsVoid) {
+      // Find the underlying entity schema (e.g., "Todo" from "GetTodoResponseContent")
+      const entitySchema = findUnderlyingEntitySchema(op.responseSchemaRef, op.paginationKey);
+      if (entitySchema && TYPE_ALIASES[entitySchema]) {
+        const [typeName] = TYPE_ALIASES[entitySchema];
+        if (!added.has(typeName)) {
+          exports.push(`/** ${typeName} entity from the Basecamp API. */`);
+          exports.push(`export type ${typeName} = components["schemas"]["${entitySchema}"];`);
+          added.add(typeName);
+        }
+      }
+
+      // For wrapped pagination, also export other entity types referenced in wrapper fields
+      if (op.paginationKey && op.hasPagination && !op.returnsArray) {
+        const schema = globalSchemas[op.responseSchemaRef];
+        if (schema?.type === "object" && schema.properties) {
+          for (const [propName, propSchema] of Object.entries(schema.properties)) {
+            if (propName === op.paginationKey) continue;
+            if (propSchema.$ref) {
+              const refName = resolveRef(propSchema.$ref);
+              if (TYPE_ALIASES[refName]) {
+                const [typeName] = TYPE_ALIASES[refName];
+                if (!added.has(typeName)) {
+                  exports.push(`/** ${typeName} entity from the Basecamp API. */`);
+                  exports.push(`export type ${typeName} = components["schemas"]["${refName}"];`);
+                  added.add(typeName);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return exports;
+}
+
+function findUnderlyingEntitySchema(responseSchemaRef: string, paginationKey?: string): string | null {
+  // ResponseContent types often alias entity types
+  const schema = globalSchemas[responseSchemaRef];
+  if (!schema) return null;
+
+  // Check if it's a direct $ref to a known entity
+  if (schema.$ref) {
+    const refName = resolveRef(schema.$ref);
+    // Only return if it's a known entity type
+    if (TYPE_ALIASES[refName]) {
+      return refName;
+    }
+  }
+
+  // If it's an array, get item type (only if it's a known entity)
+  if (schema.type === "array" && schema.items?.$ref) {
+    const refName = resolveRef(schema.items.$ref);
+    if (TYPE_ALIASES[refName]) {
+      return refName;
+    }
+  }
+
+  // If it's an object with a pagination key, resolve the entity type from properties[key].items.$ref
+  if (paginationKey && schema.type === "object" && schema.properties?.[paginationKey]) {
+    const keyProp = schema.properties[paginationKey];
+    if (keyProp.type === "array" && keyProp.items?.$ref) {
+      const refName = resolveRef(keyProp.items.$ref);
+      if (TYPE_ALIASES[refName]) {
+        return refName;
+      }
+    }
+  }
+
+  // Don't fall back to response schema - it may not be a true entity type
+  return null;
+}
+
+function generateRequestInterfaces(service: ServiceDefinition): string[] {
+  const lines: string[] = [];
+  const generated = new Set<string>();
+
+  for (const op of service.operations) {
+    // Generate request interfaces for create/update operations
+    if (op.bodySchemaRef && op.bodyProperties.length > 0) {
+      const interfaceName = `${capitalize(op.methodName)}${capitalize(singularize(service.name))}Request`;
+      if (generated.has(interfaceName)) continue;
+      generated.add(interfaceName);
+
+      lines.push(`/**`);
+      lines.push(` * Request parameters for ${op.methodName}.`);
+      lines.push(` */`);
+      lines.push(`export interface ${interfaceName} {`);
+
+      for (const prop of op.bodyProperties) {
+        const optional = prop.required ? "" : "?";
+        const isPipeEnum = parsePipeEnum(prop.description) !== null;
+        // Use human-readable name when description is a pipe enum (type already shows the values)
+        const desc = isPipeEnum ? capitalize(toHumanReadable(prop.name)) : (prop.description || PROPERTY_HINTS[prop.name] || capitalize(toHumanReadable(prop.name)));
+        const format = prop.formatHint ? ` (${prop.formatHint})` : "";
+        lines.push(`  /** ${desc}${format} */`);
+        lines.push(`  ${toCamelCase(prop.name)}${optional}: ${mapPropertyType(prop.type)};`);
+      }
+
+      lines.push(`}`);
+      lines.push(``);
+    }
+
+    // Generate options interfaces for query params (or pagination-only ops)
+    const optionalQueryParams = op.queryParams.filter((q) => !q.required);
+    const isWrappedPaginated = op.hasPagination && !op.returnsArray && !!op.paginationKey;
+    const needsOptionsInterface = optionalQueryParams.length > 0 || (op.hasPagination && op.returnsArray) || isWrappedPaginated;
+    if (needsOptionsInterface) {
+      const interfaceName = `${capitalize(op.methodName)}${capitalize(singularize(service.name))}Options`;
+      if (generated.has(interfaceName)) continue;
+      generated.add(interfaceName);
+
+      // Extend PaginationOptions for paginated operations
+      const extendsClause = (op.hasPagination && op.returnsArray) || isWrappedPaginated ? " extends PaginationOptions" : "";
+
+      lines.push(`/**`);
+      lines.push(` * Options for ${op.methodName}.`);
+      lines.push(` */`);
+      lines.push(`export interface ${interfaceName}${extendsClause} {`);
+
+      for (const param of optionalQueryParams) {
+        const isPipeEnum = parsePipeEnum(param.description) !== null;
+        // Use human-readable name when description is a pipe enum (type already shows the values)
+        const desc = isPipeEnum ? `Filter by ${toHumanReadable(param.name)}` : (param.description || PROPERTY_HINTS[param.name] || capitalize(toHumanReadable(param.name)));
+        // Special-case: bucket param is a CSV array of project IDs
+        if (param.name === "bucket" && param.type === "string") {
+          lines.push(`  /** Project IDs to filter by */`);
+          lines.push(`  ${toCamelCase(param.name)}?: number[];`);
+        } else if (param.deprecated) {
+          // @deprecated is an editor/static-analysis signal (IDE strikethrough +
+          // suggestion diagnostic), not a tsc compile warning. See #406.
+          lines.push(`  /**`);
+          lines.push(`   * ${desc}`);
+          lines.push(`   * @deprecated ${param.deprecationReason || "deprecated"}`);
+          lines.push(`   */`);
+          lines.push(`  ${toCamelCase(param.name)}?: ${param.type};`);
+        } else {
+          lines.push(`  /** ${desc} */`);
+          lines.push(`  ${toCamelCase(param.name)}?: ${param.type};`);
+        }
+      }
+
+      lines.push(`}`);
+      lines.push(``);
+    }
+  }
+
+  return lines;
+}
+
+function mapPropertyType(type: string): string {
+  // Map schema types to cleaner TypeScript types
+  switch (type) {
+    case "Array":
+      return "number[]"; // Usually IDs
+    default:
+      return type;
+  }
+}
+
+function generateMethod(op: ParsedOperation, serviceName: string): string[] {
+  const lines: string[] = [];
+  const resourceName = singularize(serviceName);
+
+  // Build param string and types
+  const { paramString, hasOptions, hasRequest } = buildMethodSignature(op, resourceName);
+
+  // Return type
+  const returnType = buildReturnType(op, serviceName);
+
+  // JSDoc
+  lines.push(`  /**`);
+  lines.push(`   * ${enrichDescription(op.description.split("\n")[0])}`);
+
+  // @param tags
+  for (const p of op.pathParams) {
+    const paramDesc = p.description || `The ${toHumanReadable(p.name)}`;
+    lines.push(`   * @param ${p.name} - ${paramDesc}`);
+  }
+  if (hasRequest) {
+    const reqVerb = op.methodName.startsWith("create") || op.methodName === "create" ? "creation" :
+      op.methodName.startsWith("update") || op.methodName === "update" ? "update" : "request";
+    lines.push(`   * @param req - ${capitalize(op.resourceType)} ${reqVerb} parameters`);
+  }
+  if (op.bodyContentType === "octet-stream") {
+    lines.push(`   * @param data - Binary file data to upload`);
+    lines.push(`   * @param contentType - MIME type of the file (e.g., "image/png", "application/pdf")`);
+  }
+  if (op.bodyContentType === "multipart") {
+    lines.push(`   * @param file - File or Blob to upload`);
+    lines.push(`   * @param filename - Display name for the uploaded file`);
+  }
+  // Required query params
+  const requiredQueryParams = op.queryParams.filter((q) => q.required);
+  for (const q of requiredQueryParams) {
+    const desc = q.description || toHumanReadable(q.name);
+    lines.push(`   * @param ${toCamelCase(q.name)} - ${desc}`);
+  }
+  if (hasOptions) {
+    lines.push(`   * @param options - Optional query parameters`);
+  }
+
+  // @returns
+  if (op.returnsVoid) {
+    lines.push(`   * @returns void`);
+  } else if (op.returnsArray && op.hasPagination) {
+    const entityType = getEntityTypeName(op.responseSchemaRef || "");
+    lines.push(`   * @returns All ${entityType || "results"} across all pages, with .meta.totalCount`);
+  } else if (op.hasPagination && !op.returnsArray && op.paginationKey) {
+    const entityType = getEntityTypeName(op.responseSchemaRef || "", op.paginationKey);
+    lines.push(`   * @returns Wrapper with ${op.paginationKey} as ListResult<${entityType || "unknown"}> across all pages`);
+  } else if (op.returnsArray) {
+    const entityType = getEntityTypeName(op.responseSchemaRef || "");
+    lines.push(`   * @returns Array of ${entityType || "results"}`);
+  } else {
+    const entityType = getEntityTypeName(op.responseSchemaRef || "");
+    lines.push(`   * @returns The ${entityType || op.resourceType}`);
+  }
+
+  // @throws — specific to operation type
+  if (op.methodName === "get" || op.methodName.startsWith("get")) {
+    lines.push(`   * @throws {BasecampError} If the resource is not found`);
+  } else if (op.isMutation) {
+    if (op.methodName === "create" || op.methodName.startsWith("create")) {
+      lines.push(`   * @throws {BasecampError} If required fields are missing or invalid`);
+    } else if (op.methodName === "update" || op.methodName.startsWith("update")) {
+      lines.push(`   * @throws {BasecampError} If the resource is not found or fields are invalid`);
+    } else {
+      lines.push(`   * @throws {BasecampError} If the request fails`);
+    }
+  }
+
+  // @example on ALL methods
+  lines.push(`   *`);
+  lines.push(`   * @example`);
+  lines.push(`   * \`\`\`ts`);
+  const exampleArgs = generateExampleArgs(op, hasRequest);
+  const clientCall = `client.${camelCase(serviceName)}.${op.methodName}`;
+  if (op.returnsVoid) {
+    lines.push(`   * await ${clientCall}(${exampleArgs});`);
+  } else {
+    lines.push(`   * const result = await ${clientCall}(${exampleArgs});`);
+  }
+  // For list methods with options, show a second example with options
+  if (hasOptions && (op.methodName === "list" || op.methodName.startsWith("list"))) {
+    const optionalQueryParams = op.queryParams.filter((q) => !q.required);
+    if (optionalQueryParams.length > 0) {
+      const firstParam = optionalQueryParams[0];
+      // Use correct example value for special-cased bucket param
+      const exampleValue = (firstParam.name === "bucket" && firstParam.type === "string")
+        ? "[123]"
+        : generateExampleValue(firstParam.name, firstParam.type);
+      const optionField = toCamelCase(firstParam.name);
+      const pathArgs = op.pathParams.map((p) => p.type === "number" ? "123" : '"example"');
+      const requiredQueryArgs = op.queryParams.filter((q) => q.required).map((q) =>
+        q.type === "number" ? "123" : `"${q.name}"`
+      );
+      const allPrecedingArgs = [...pathArgs, ...requiredQueryArgs];
+      lines.push(`   *`);
+      lines.push(`   * // With options`);
+      lines.push(`   * const filtered = await ${clientCall}(${[...allPrecedingArgs, `{ ${optionField}: ${exampleValue} }`].join(", ")});`);
+    }
+  }
+  lines.push(`   * \`\`\``);
+
+  lines.push(`   */`);
+
+  // Method signature
+  lines.push(`  async ${op.methodName}(${paramString}): Promise<${returnType}> {`);
+
+  // Client-side validation for required body fields (defense-in-depth for JS consumers)
+  if (hasRequest && op.bodyProperties.length > 0) {
+    const validationLines: string[] = [];
+
+    for (const prop of op.bodyProperties) {
+      if (!prop.required) continue;
+      // Skip booleans and numbers — falsy checks don't work (false, 0 are valid values)
+      const baseType = prop.type.replace(/\s*\|.*/g, "").replace(/"/g, "").trim();
+      if (baseType === "boolean" || baseType === "number") continue;
+      const camelName = toCamelCase(prop.name);
+      const snakeName = prop.name;
+      validationLines.push(`    if (!req.${camelName}) {`);
+      validationLines.push(`      throw Errors.validation("${capitalize(toHumanReadable(snakeName))} is required");`);
+      validationLines.push(`    }`);
+    }
+
+    // Date format validation for properties with YYYY-MM-DD format hint
+    for (const prop of op.bodyProperties) {
+      const camelName = toCamelCase(prop.name);
+      if (prop.formatHint === "YYYY-MM-DD") {
+        const check = prop.required ? `req.${camelName}` : `req.${camelName}`;
+        const guard = prop.required ? "" : `req.${camelName} && `;
+        validationLines.push(`    if (${guard}!/^\\d{4}-\\d{2}-\\d{2}$/.test(${check})) {`);
+        validationLines.push(`      throw Errors.validation("${capitalize(toHumanReadable(prop.name))} must be in YYYY-MM-DD format");`);
+        validationLines.push(`    }`);
+      }
+    }
+
+    if (validationLines.length > 0) {
+      lines.push(...validationLines);
+    }
+
+  }
+
+  // Method body — use requestPaginated for paginated array responses
+  const isPaginated = op.hasPagination && op.returnsArray;
+  const isWrappedPaginated = op.hasPagination && !op.returnsArray && !!op.paginationKey;
+  // Multipart uploads use requestMultipartUpload — completely different call path
+  if (op.bodyContentType === "multipart") {
+    const fieldName = op.multipartField || "file";
+    const urlPath = op.path.replace(/\{(\w+)\}/g, (_, name: string) => `\${${toCamelCase(name)}}`);
+    lines.push(`    const url = \`\${this.baseUrl}\` +`);
+    lines.push(`      \`${urlPath}\`;`);
+    lines.push(`    return this.requestMultipartUpload(`);
+    lines.push(`      {`);
+    lines.push(`        service: "${serviceName}",`);
+    lines.push(`        operation: "${op.operationId}",`);
+    lines.push(`        resourceType: "${op.resourceType}",`);
+    lines.push(`        isMutation: true,`);
+    lines.push(`      },`);
+    lines.push(`      url,`);
+    lines.push(`      "${op.httpMethod.toUpperCase()}",`);
+    lines.push(`      file,`);
+    lines.push(`      "${fieldName}",`);
+    lines.push(`      filename,`);
+    lines.push(`    );`);
+    lines.push(`  }`);
+    lines.push(``);
+    return lines;
+  }
+
+  const wrappedReturnType = isWrappedPaginated ? buildReturnType(op, serviceName) : null;
+  if (op.returnsVoid) {
+    lines.push(`    await this.request(`);
+  } else if (isPaginated) {
+    lines.push(`    return this.requestPaginated(`);
+  } else if (isWrappedPaginated) {
+    const entitySchema = findUnderlyingEntitySchema(op.responseSchemaRef || "", op.paginationKey);
+    const entityName = entitySchema && TYPE_ALIASES[entitySchema] ? TYPE_ALIASES[entitySchema][0] : "unknown";
+    lines.push(`    return this.requestPaginatedWrapped<"${op.paginationKey}", ${entityName}>(`);
+  } else {
+    lines.push(`    const response = await this.request(`);
+  }
+
+  lines.push(`      {`);
+  lines.push(`        service: "${serviceName}",`);
+  lines.push(`        operation: "${op.operationId}",`);
+  lines.push(`        resourceType: "${op.resourceType}",`);
+  lines.push(`        isMutation: ${op.isMutation},`);
+
+  const projectParam = op.pathParams.find((p) => p.name === "projectId" || p.name === "bucketId");
+  if (projectParam) {
+    lines.push(projectParam.name === "projectId" ? `        projectId,` : `        projectId: ${projectParam.name},`);
+  }
+
+  const resourceParam = op.pathParams.findLast((p) => p.name !== "projectId" && p.name !== "bucketId" && (p.name.endsWith("Id") || p.name === "id"));
+  if (resourceParam) {
+    lines.push(`        resourceId: ${resourceParam.name},`);
+  }
+
+  lines.push(`      },`);
+  lines.push(`      () =>`);
+  lines.push(`        this.client.${op.httpMethod}("${op.path}", {`);
+
+  // Params object
+  const pathParamNames = op.pathParams.map((p) => p.name);
+  const hasPathParams = pathParamNames.length > 0;
+  const hasQueryParams = op.queryParams.length > 0;
+  const isOctetStream = op.bodyContentType === "octet-stream";
+  if (hasPathParams || hasQueryParams || isOctetStream) {
+    lines.push(`          params: {`);
+
+    if (hasPathParams) {
+      lines.push(`            path: { ${pathParamNames.join(", ")} },`);
+    }
+
+    if (hasQueryParams) {
+      const queryParts = op.queryParams.map((q) => {
+        const camelName = toCamelCase(q.name);
+        // Wire key is the raw OpenAPI name (may carry `[]` or `_`); quote unless
+        // it is a bare identifier. openapi-fetch emits `bucket_ids[]=…` literal.
+        const key = /^[A-Za-z][A-Za-z0-9]*$/.test(q.wireName) ? q.wireName : `"${q.wireName}"`;
+        const value = q.required ? camelName : `options?.${camelName}`;
+        // Special-case: bucket param is number[] → join as CSV string
+        if (q.name === "bucket" && !q.required) {
+          return `${key}: options?.${camelName}?.join(",")`;
+        }
+        return `${key}: ${value}`;
+      });
+      lines.push(`            query: { ${queryParts.join(", ")} },`);
+    }
+
+    if (isOctetStream) {
+      lines.push(`            // eslint-disable-next-line @typescript-eslint/no-explicit-any`);
+      lines.push(`            header: { "Content-Type": contentType } as any,`);
+    }
+
+    lines.push(`          },`);
+  }
+
+  // Body
+  if (op.bodySchemaRef && op.bodyContentType === "json") {
+    // Convert camelCase request to snake_case API body
+    lines.push(`          body: ${buildBodyMapping(op)},`);
+  } else if (isOctetStream) {
+    lines.push(`          body: data as unknown as string,`);
+    lines.push(`          // eslint-disable-next-line @typescript-eslint/no-explicit-any`);
+    lines.push(`          bodySerializer: (body: unknown) => body as any,`);
+  }
+
+  lines.push(`        })`);
+  if (isPaginated) {
+    // Pass pagination options as third arg to requestPaginated
+    lines.push(`      , options`);
+  } else if (isWrappedPaginated) {
+    // Pass key and pagination options as args 3 and 4 to requestPaginatedWrapped
+    lines.push(`      , "${op.paginationKey}", options`);
+  }
+  if (isWrappedPaginated && wrappedReturnType) {
+    lines.push(`    ) as unknown as ${wrappedReturnType};`);
+  } else {
+    lines.push(`    );`);
+  }
+
+  if (!op.returnsVoid && !isPaginated && !isWrappedPaginated) {
+    if (op.returnsArray) {
+      lines.push(`    return response ?? [];`);
+    } else {
+      lines.push(`    return response;`);
+    }
+  }
+
+  lines.push(`  }`);
+
+  return lines;
+}
+
+function buildMethodSignature(op: ParsedOperation, resourceName: string): {
+  paramString: string;
+  hasOptions: boolean;
+  hasRequest: boolean;
+  requestInterfaceName: string;
+  optionsInterfaceName: string;
+} {
+  const params: string[] = [];
+  let hasOptions = false;
+  let hasRequest = false;
+  const requestInterfaceName = `${capitalize(op.methodName)}${capitalize(resourceName)}Request`;
+  const optionsInterfaceName = `${capitalize(op.methodName)}${capitalize(resourceName)}Options`;
+
+  // Path params
+  for (const p of op.pathParams) {
+    params.push(`${p.name}: ${p.type}`);
+  }
+
+  // Body params (use generated interface)
+  if (op.bodySchemaRef && op.bodyProperties.length > 0 && op.bodyContentType === "json") {
+    params.push(`req: ${requestInterfaceName}`);
+    hasRequest = true;
+  }
+
+  // Binary upload
+  if (op.bodyContentType === "octet-stream") {
+    params.push(`data: ArrayBuffer | Uint8Array | string`);
+    params.push(`contentType: string`);
+  }
+
+  // Multipart file upload
+  if (op.bodyContentType === "multipart") {
+    params.push(`file: Blob | File`);
+    params.push(`filename?: string`);
+  }
+
+  // Query params (required first, then options)
+  const requiredQueryParams = op.queryParams.filter((q) => q.required);
+  const optionalQueryParams = op.queryParams.filter((q) => !q.required);
+
+  for (const q of requiredQueryParams) {
+    params.push(`${toCamelCase(q.name)}: ${q.type}`);
+  }
+
+  const isWrappedPaginated = op.hasPagination && !op.returnsArray && !!op.paginationKey;
+  if (optionalQueryParams.length > 0 || (op.hasPagination && op.returnsArray) || isWrappedPaginated) {
+    params.push(`options?: ${optionsInterfaceName}`);
+    hasOptions = true;
+  }
+
+  return {
+    paramString: params.join(", "),
+    hasOptions,
+    hasRequest,
+    requestInterfaceName,
+    optionsInterfaceName,
+  };
+}
+
+function buildReturnType(op: ParsedOperation, serviceName: string): string {
+  if (op.returnsVoid) return "void";
+
+  // Try to get a friendly type name
+  if (op.responseSchemaRef) {
+    // Wrapped pagination: build explicit shape like { person: Person; events: ListResult<TimelineEvent> }
+    if (op.paginationKey && op.hasPagination && !op.returnsArray) {
+      const schema = globalSchemas[op.responseSchemaRef];
+      if (schema?.type === "object" && schema.properties) {
+        const parts: string[] = [];
+        for (const [propName, propSchema] of Object.entries(schema.properties)) {
+          if (propName === op.paginationKey) {
+            const entitySchema = findUnderlyingEntitySchema(op.responseSchemaRef, op.paginationKey);
+            const entityName = entitySchema && TYPE_ALIASES[entitySchema] ? TYPE_ALIASES[entitySchema][0] : "unknown";
+            parts.push(`${propName}: ListResult<${entityName}>`);
+          } else {
+            const propType = propSchema.$ref
+              ? (() => {
+                  const refName = resolveRef(propSchema.$ref);
+                  return TYPE_ALIASES[refName] ? TYPE_ALIASES[refName][0] : `components["schemas"]["${refName}"]`;
+                })()
+              : schemaToTsType(propSchema);
+            parts.push(`${propName}: ${propType}`);
+          }
+        }
+        return `{ ${parts.join("; ")} }`;
+      }
+    }
+
+    const entityName = getEntityTypeName(op.responseSchemaRef, op.paginationKey);
+    if (entityName) {
+      if (op.returnsArray && op.hasPagination) {
+        return `ListResult<${entityName}>`;
+      }
+      return op.returnsArray ? `${entityName}[]` : entityName;
+    }
+    // Fallback to schema ref
+    return `components["schemas"]["${op.responseSchemaRef}"]`;
+  }
+
+  if (op.returnsArray) return "unknown[]";
+  return "unknown";
+}
+
+function buildBodyMapping(op: ParsedOperation): string {
+  if (!op.bodyProperties.length) return "req";
+
+  // Always emit explicit object mapping - never use "req as any"
+  const mappings = op.bodyProperties.map((prop) => {
+    const camelName = toCamelCase(prop.name);
+    if (camelName === prop.name) {
+      return `${prop.name}: req.${camelName}`;
+    }
+    return `${prop.name}: req.${camelName}`;
+  });
+
+  return `{\n            ${mappings.join(",\n            ")},\n          }`;
+}
+
+function generateExampleValue(
+  name: string,
+  type: string,
+  formatHint?: string,
+  schema?: Schema,
+  visited: Set<string> = new Set(),
+): string {
+  if (formatHint === "YYYY-MM-DD") return '"2025-06-01"';
+  if (formatHint?.includes("RFC3339")) return '"2025-06-01T09:00:00Z"';
+
+  // Object-valued members (e.g. a `project`/`gauge`/`schedule` envelope) render as a
+  // nested object of their required child members, using each child's actual type.
+  // Without this, refs fall through to the '"example"' scalar and emit invalid examples
+  // like `{ project: "example" }`.
+  const resolved = schema?.$ref ? globalSchemas[resolveRef(schema.$ref)] : schema;
+  if (resolved?.type === "object" && resolved.properties) {
+    const refName = schema?.$ref ? resolveRef(schema.$ref) : undefined;
+    if (refName && visited.has(refName)) return "{ }"; // guard against recursive $refs
+    const nextVisited = refName ? new Set(visited).add(refName) : visited;
+    const requiredChildren = resolved.required || [];
+    const fields = Object.entries(resolved.properties)
+      .filter(([childName]) => requiredChildren.includes(childName))
+      .map(([childName, childSchema]) => {
+        const childType = parsePipeEnum(childSchema.description) || schemaToTsType(childSchema, true);
+        const value = generateExampleValue(
+          childName,
+          childType,
+          getFormatHint(childSchema),
+          childSchema,
+          nextVisited,
+        );
+        // Nested schema members serialize with their raw (snake_case) keys — the
+        // member is typed as the component schema and forwarded to the wire
+        // unchanged. Only the outer service request interface is camel-cased.
+        return `${childName}: ${value}`;
+      });
+    return `{ ${fields.join(", ")} }`;
+  }
+
+  if (type.includes("[]") || type === "Array") return "[1234]";
+  if (type === "boolean") return "true";
+  if (type === "number") return "1";
+  // Enum/union types — pick the first value
+  if (type.startsWith('"')) {
+    const first = type.split("|")[0].trim();
+    return first; // Already quoted
+  }
+  if (name === "content") return '"Hello world"';
+  if (name === "name") return '"My example"';
+  if (name === "description") return '"Details here"';
+  return '"example"';
+}
+
+function generateExampleArgs(op: ParsedOperation, hasRequest: boolean): string {
+  const args: string[] = [];
+
+  // Path params
+  for (const p of op.pathParams) {
+    args.push(p.type === "number" ? "123" : '"example"');
+  }
+
+  // Request body (JSON) — show required fields with realistic values
+  if (hasRequest) {
+    const requiredProps = op.bodyProperties.filter((p) => p.required);
+    if (requiredProps.length === 0) {
+      args.push("{ }");
+    } else {
+      const fields = requiredProps.map((p) => {
+        const camelName = toCamelCase(p.name);
+        const value = generateExampleValue(p.name, p.type, p.formatHint, p.schema);
+        return `${camelName}: ${value}`;
+      });
+      args.push(`{ ${fields.join(", ")} }`);
+    }
+  }
+
+  // Binary upload
+  if (op.bodyContentType === "octet-stream") {
+    args.push("fileData");
+    args.push('"image/png"');
+  }
+
+  // Required query params
+  const requiredQueryParams = op.queryParams.filter((q) => q.required);
+  for (const q of requiredQueryParams) {
+    args.push(q.type === "number" ? "123" : `"${q.name}"`);
+  }
+
+  return args.join(", ");
+}
+
+// =============================================================================
+// Utility Functions
+// =============================================================================
+
+function toCamelCase(str: string): string {
+  return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+function camelCase(str: string): string {
+  return str.charAt(0).toLowerCase() + str.slice(1);
+}
+
+function capitalize(str: string): string {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * Naive singularization for service names → interface suffixes.
+ * Handles -ies → -y, -ses → -s, and plain -s removal.
+ */
+function singularize(str: string): string {
+  if (str.endsWith("ies")) return str.slice(0, -3) + "y";
+  if (str.endsWith("ses")) return str.slice(0, -2);
+  if (str.endsWith("s")) return str.slice(0, -1);
+  return str;
+}
+
+function toHumanReadable(str: string): string {
+  if (str.endsWith("Id")) {
+    return str.slice(0, -2).replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase() + " ID";
+  }
+  return str.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
+function toKebabCase(str: string): string {
+  return str
+    .replace(/([a-z])([A-Z])/g, "$1-$2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
+    .toLowerCase();
+}
+
+// =============================================================================
+// Main
+// =============================================================================
+
+function main() {
+  const args = process.argv.slice(2);
+  let openapiPath = "../openapi.json";
+  let outputDir = "src/generated/services";
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--openapi" && args[i + 1]) {
+      openapiPath = args[++i];
+    } else if (args[i] === "--output" && args[i + 1]) {
+      outputDir = args[++i];
+    }
+  }
+
+  const resolvedOpenapiPath = path.resolve(openapiPath);
+  const resolvedOutputDir = path.resolve(outputDir);
+
+  if (!fs.existsSync(resolvedOpenapiPath)) {
+    console.error(`Error: OpenAPI file not found: ${resolvedOpenapiPath}`);
+    process.exit(1);
+  }
+
+  const spec: OpenAPISpec = JSON.parse(fs.readFileSync(resolvedOpenapiPath, "utf-8"));
+  setSchemas(spec.components.schemas);
+
+  const services = groupOperations(spec);
+
+  if (!fs.existsSync(resolvedOutputDir)) {
+    fs.mkdirSync(resolvedOutputDir, { recursive: true });
+  }
+
+  const generatedFiles: string[] = [];
+  for (const [name, service] of services) {
+    const code = generateService(service);
+    const fileName = `${toKebabCase(name)}.ts`;
+    const filePath = path.join(resolvedOutputDir, fileName);
+    fs.writeFileSync(filePath, code);
+    generatedFiles.push(fileName);
+    console.log(`Generated ${fileName} (${service.operations.length} operations)`);
+  }
+
+  // Generate index.ts - only export service classes to avoid duplicate type exports
+  // Entity types are available via each service file or directly from schema.js
+  const indexLines: string[] = [];
+  for (const [name, service] of services) {
+    const fileName = toKebabCase(name);
+    indexLines.push(`export { ${service.className} } from "./${fileName}.js";`);
+  }
+  fs.writeFileSync(path.join(resolvedOutputDir, "index.ts"), indexLines.join("\n") + "\n");
+  generatedFiles.push("index.ts");
+  console.log(`Generated index.ts`);
+
+  // Remove stale generated files that are no longer produced by the current spec
+  const generatedSet = new Set(generatedFiles);
+  for (const existing of fs.readdirSync(resolvedOutputDir)) {
+    if (existing.endsWith(".ts") && !generatedSet.has(existing)) {
+      fs.unlinkSync(path.join(resolvedOutputDir, existing));
+      console.log(`Removed stale ${existing}`);
+    }
+  }
+
+  console.log(`\nGenerated ${services.size} services with ${
+    Array.from(services.values()).reduce((sum, s) => sum + s.operations.length, 0)
+  } operations total.`);
+}
+
+// Only run when invoked directly (not when imported by tests).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
+
+// Exported for generator regression tests.
+export { generateExampleValue, setSchemas };
+export type { Schema };

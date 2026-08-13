@@ -1,0 +1,21 @@
+[
+  {
+    "name": "Large integer IDs preserved without precision loss",
+    "description": "Verifies that integer IDs larger than 2^53 are preserved without floating-point precision loss (1B.6). TypeScript retains a known gap because returning bigint would break its number-typed API surface, although Node >=22.12 can decode the raw digits losslessly via JSON.parse reviver source access.",
+    "operation": "GetProject",
+    "method": "GET",
+    "path": "/projects/{projectId}",
+    "pathParams": {"projectId": 9007199254740993},
+    "mockResponses": [
+      {
+        "status": 200,
+        "body": {"id": 9007199254740993, "name": "Large ID Project", "status": "active", "created_at": "2025-01-01T00:00:00Z", "updated_at": "2025-01-01T00:00:00Z", "url": "https://3.basecampapi.com/999/projects/9007199254740993.json", "app_url": "https://3.basecamp.com/999/projects/9007199254740993"}
+      }
+    ],
+    "assertions": [
+      {"type": "noError"},
+      {"type": "responseBody", "path": "id", "expected": 9007199254740993}
+    ],
+    "tags": ["integer-precision", "type-fidelity"]
+  }
+]

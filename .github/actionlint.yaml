@@ -1,0 +1,11 @@
+self-hosted-runner:
+  labels: []
+
+config-variables: null
+
+paths:
+  # SC2086 fires on ${{ }} expressions which are interpolated by GitHub
+  # Actions before the shell sees them. Safe to ignore repo-wide.
+  .github/workflows/**/*.yml:
+    ignore:
+      - 'SC2086'

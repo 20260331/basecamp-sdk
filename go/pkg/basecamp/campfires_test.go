@@ -1,0 +1,1059 @@
+package basecamp
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func campfiresFixturesDir() string {
+	return filepath.Join("..", "..", "..", "spec", "fixtures", "campfires")
+}
+
+func loadCampfiresFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	path := filepath.Join(campfiresFixturesDir(), name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read fixture %s: %v", name, err)
+	}
+	return data
+}
+
+func TestCampfire_UnmarshalList(t *testing.T) {
+	data := loadCampfiresFixture(t, "list.json")
+
+	var campfires []Campfire
+	if err := json.Unmarshal(data, &campfires); err != nil {
+		t.Fatalf("failed to unmarshal list.json: %v", err)
+	}
+
+	if len(campfires) != 2 {
+		t.Errorf("expected 2 campfires, got %d", len(campfires))
+	}
+
+	// Verify first campfire
+	c1 := campfires[0]
+	if c1.ID != 1069479345 {
+		t.Errorf("expected ID 1069479345, got %d", c1.ID)
+	}
+	if c1.Status != "active" {
+		t.Errorf("expected status 'active', got %q", c1.Status)
+	}
+	if c1.Type != "Chat::Transcript" {
+		t.Errorf("expected type 'Chat::Transcript', got %q", c1.Type)
+	}
+	if c1.Title != "Campfire" {
+		t.Errorf("expected title 'Campfire', got %q", c1.Title)
+	}
+	if c1.VisibleToClients != false {
+		t.Errorf("expected VisibleToClients false, got true")
+	}
+	if c1.URL != "https://3.basecampapi.com/195539477/buckets/2085958499/chats/1069479345.json" {
+		t.Errorf("unexpected URL: %q", c1.URL)
+	}
+	if c1.AppURL != "https://3.basecamp.com/195539477/buckets/2085958499/chats/1069479345" {
+		t.Errorf("unexpected AppURL: %q", c1.AppURL)
+	}
+	if c1.LinesURL != "https://3.basecampapi.com/195539477/buckets/2085958499/chats/1069479345/lines.json" {
+		t.Errorf("unexpected LinesURL: %q", c1.LinesURL)
+	}
+	if c1.FilesURL != "https://3.basecampapi.com/195539477/buckets/2085958499/chats/1069479345/uploads.json" {
+		t.Errorf("unexpected FilesURL: %q", c1.FilesURL)
+	}
+
+	// Verify bucket
+	if c1.Bucket == nil {
+		t.Fatal("expected Bucket to be non-nil")
+	}
+	if c1.Bucket.ID != 2085958499 {
+		t.Errorf("expected Bucket.ID 2085958499, got %d", c1.Bucket.ID)
+	}
+	if c1.Bucket.Name != "The Leto Laptop" {
+		t.Errorf("expected Bucket.Name 'The Leto Laptop', got %q", c1.Bucket.Name)
+	}
+	if c1.Bucket.Type != "Project" {
+		t.Errorf("expected Bucket.Type 'Project', got %q", c1.Bucket.Type)
+	}
+
+	// Verify creator
+	if c1.Creator == nil {
+		t.Fatal("expected Creator to be non-nil")
+	}
+	if c1.Creator.ID != 1049715914 {
+		t.Errorf("expected Creator.ID 1049715914, got %d", c1.Creator.ID)
+	}
+	if c1.Creator.Name != "Victor Cooper" {
+		t.Errorf("expected Creator.Name 'Victor Cooper', got %q", c1.Creator.Name)
+	}
+
+	// Verify second campfire
+	c2 := campfires[1]
+	if c2.ID != 1069479400 {
+		t.Errorf("expected ID 1069479400, got %d", c2.ID)
+	}
+	if c2.VisibleToClients != true {
+		t.Errorf("expected VisibleToClients true, got false")
+	}
+	if c2.Bucket == nil {
+		t.Fatal("expected Bucket to be non-nil for second campfire")
+	}
+	if c2.Bucket.Name != "Marketing Campaign" {
+		t.Errorf("expected Bucket.Name 'Marketing Campaign', got %q", c2.Bucket.Name)
+	}
+	if c2.Creator == nil {
+		t.Fatal("expected Creator to be non-nil for second campfire")
+	}
+	if c2.Creator.Name != "Annie Bryan" {
+		t.Errorf("expected Creator.Name 'Annie Bryan', got %q", c2.Creator.Name)
+	}
+}
+
+func TestCampfire_UnmarshalGet(t *testing.T) {
+	data := loadCampfiresFixture(t, "get.json")
+
+	var campfire Campfire
+	if err := json.Unmarshal(data, &campfire); err != nil {
+		t.Fatalf("failed to unmarshal get.json: %v", err)
+	}
+
+	if campfire.ID != 1069479345 {
+		t.Errorf("expected ID 1069479345, got %d", campfire.ID)
+	}
+	if campfire.Status != "active" {
+		t.Errorf("expected status 'active', got %q", campfire.Status)
+	}
+	if campfire.Type != "Chat::Transcript" {
+		t.Errorf("expected type 'Chat::Transcript', got %q", campfire.Type)
+	}
+	if campfire.Title != "Campfire" {
+		t.Errorf("expected title 'Campfire', got %q", campfire.Title)
+	}
+
+	// Verify timestamps are parsed
+	if campfire.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be non-zero")
+	}
+	if campfire.UpdatedAt.IsZero() {
+		t.Error("expected UpdatedAt to be non-zero")
+	}
+
+	// Verify creator with full details
+	if campfire.Creator == nil {
+		t.Fatal("expected Creator to be non-nil")
+	}
+	if campfire.Creator.ID != 1049715914 {
+		t.Errorf("expected Creator.ID 1049715914, got %d", campfire.Creator.ID)
+	}
+	if campfire.Creator.Name != "Victor Cooper" {
+		t.Errorf("expected Creator.Name 'Victor Cooper', got %q", campfire.Creator.Name)
+	}
+	if campfire.Creator.EmailAddress != "victor@honchodesign.com" {
+		t.Errorf("expected Creator.EmailAddress 'victor@honchodesign.com', got %q", campfire.Creator.EmailAddress)
+	}
+	if campfire.Creator.Title != "Chief Strategist" {
+		t.Errorf("expected Creator.Title 'Chief Strategist', got %q", campfire.Creator.Title)
+	}
+	if !campfire.Creator.Owner {
+		t.Error("expected Creator.Owner to be true")
+	}
+	if !campfire.Creator.Admin {
+		t.Error("expected Creator.Admin to be true")
+	}
+	// Verify creator with company
+	if campfire.Creator.Company == nil {
+		t.Fatal("expected Creator.Company to be non-nil")
+	}
+	if campfire.Creator.Company.Name != "Honcho Design" {
+		t.Errorf("expected Creator.Company.Name 'Honcho Design', got %q", campfire.Creator.Company.Name)
+	}
+}
+
+func TestCampfireLine_UnmarshalList(t *testing.T) {
+	data := loadCampfiresFixture(t, "lines_list.json")
+
+	var lines []CampfireLine
+	if err := json.Unmarshal(data, &lines); err != nil {
+		t.Fatalf("failed to unmarshal lines_list.json: %v", err)
+	}
+
+	if len(lines) != 2 {
+		t.Errorf("expected 2 lines, got %d", len(lines))
+	}
+
+	// Verify first line
+	l1 := lines[0]
+	if l1.ID != 1069479350 {
+		t.Errorf("expected ID 1069479350, got %d", l1.ID)
+	}
+	if l1.Status != "active" {
+		t.Errorf("expected status 'active', got %q", l1.Status)
+	}
+	if l1.Type != "Chat::Lines::Text" {
+		t.Errorf("expected type 'Chat::Lines::Text', got %q", l1.Type)
+	}
+	if l1.Content != "Hello everyone!" {
+		t.Errorf("expected content 'Hello everyone!', got %q", l1.Content)
+	}
+	if l1.Title != "Hello everyone!" {
+		t.Errorf("expected title 'Hello everyone!', got %q", l1.Title)
+	}
+	if l1.URL != "https://3.basecampapi.com/195539477/buckets/2085958499/chats/1069479345/lines/1069479350.json" {
+		t.Errorf("unexpected URL: %q", l1.URL)
+	}
+
+	// Verify parent (campfire)
+	if l1.Parent == nil {
+		t.Fatal("expected Parent to be non-nil")
+	}
+	if l1.Parent.ID != 1069479345 {
+		t.Errorf("expected Parent.ID 1069479345, got %d", l1.Parent.ID)
+	}
+	if l1.Parent.Title != "Campfire" {
+		t.Errorf("expected Parent.Title 'Campfire', got %q", l1.Parent.Title)
+	}
+	if l1.Parent.Type != "Chat::Transcript" {
+		t.Errorf("expected Parent.Type 'Chat::Transcript', got %q", l1.Parent.Type)
+	}
+
+	// Verify bucket
+	if l1.Bucket == nil {
+		t.Fatal("expected Bucket to be non-nil")
+	}
+	if l1.Bucket.ID != 2085958499 {
+		t.Errorf("expected Bucket.ID 2085958499, got %d", l1.Bucket.ID)
+	}
+	if l1.Bucket.Name != "The Leto Laptop" {
+		t.Errorf("expected Bucket.Name 'The Leto Laptop', got %q", l1.Bucket.Name)
+	}
+
+	// Verify creator
+	if l1.Creator == nil {
+		t.Fatal("expected Creator to be non-nil")
+	}
+	if l1.Creator.ID != 1049715914 {
+		t.Errorf("expected Creator.ID 1049715914, got %d", l1.Creator.ID)
+	}
+	if l1.Creator.Name != "Victor Cooper" {
+		t.Errorf("expected Creator.Name 'Victor Cooper', got %q", l1.Creator.Name)
+	}
+
+	// Verify second line
+	l2 := lines[1]
+	if l2.ID != 1069479355 {
+		t.Errorf("expected ID 1069479355, got %d", l2.ID)
+	}
+	if l2.Content != "Welcome to the project!" {
+		t.Errorf("expected content 'Welcome to the project!', got %q", l2.Content)
+	}
+	if l2.Creator == nil {
+		t.Fatal("expected Creator to be non-nil for second line")
+	}
+	if l2.Creator.Name != "Annie Bryan" {
+		t.Errorf("expected Creator.Name 'Annie Bryan', got %q", l2.Creator.Name)
+	}
+	// Verify creator with company
+	if l2.Creator.Company == nil {
+		t.Fatal("expected Creator.Company to be non-nil for second line")
+	}
+	if l2.Creator.Company.Name != "Honcho Design" {
+		t.Errorf("expected Creator.Company.Name 'Honcho Design', got %q", l2.Creator.Company.Name)
+	}
+}
+
+func TestCampfireLine_UnmarshalGet(t *testing.T) {
+	data := loadCampfiresFixture(t, "line_get.json")
+
+	var line CampfireLine
+	if err := json.Unmarshal(data, &line); err != nil {
+		t.Fatalf("failed to unmarshal line_get.json: %v", err)
+	}
+
+	if line.ID != 1069479350 {
+		t.Errorf("expected ID 1069479350, got %d", line.ID)
+	}
+	if line.Status != "active" {
+		t.Errorf("expected status 'active', got %q", line.Status)
+	}
+	if line.Type != "Chat::Lines::Text" {
+		t.Errorf("expected type 'Chat::Lines::Text', got %q", line.Type)
+	}
+	if line.Content != "Hello everyone!" {
+		t.Errorf("expected content 'Hello everyone!', got %q", line.Content)
+	}
+
+	// Verify timestamps are parsed
+	if line.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be non-zero")
+	}
+	if line.UpdatedAt.IsZero() {
+		t.Error("expected UpdatedAt to be non-zero")
+	}
+
+	// Verify creator with full details
+	if line.Creator == nil {
+		t.Fatal("expected Creator to be non-nil")
+	}
+	if line.Creator.ID != 1049715914 {
+		t.Errorf("expected Creator.ID 1049715914, got %d", line.Creator.ID)
+	}
+	if line.Creator.Name != "Victor Cooper" {
+		t.Errorf("expected Creator.Name 'Victor Cooper', got %q", line.Creator.Name)
+	}
+	if line.Creator.EmailAddress != "victor@honchodesign.com" {
+		t.Errorf("expected Creator.EmailAddress 'victor@honchodesign.com', got %q", line.Creator.EmailAddress)
+	}
+	if line.Creator.Bio != "Don't let your dreams be dreams" {
+		t.Errorf("expected Creator.Bio 'Don't let your dreams be dreams', got %q", line.Creator.Bio)
+	}
+	if line.Creator.Location != "Chicago, IL" {
+		t.Errorf("expected Creator.Location 'Chicago, IL', got %q", line.Creator.Location)
+	}
+}
+
+func TestCampfire_UnmarshalGetWithFilesURL(t *testing.T) {
+	data := loadCampfiresFixture(t, "get.json")
+
+	var campfire Campfire
+	if err := json.Unmarshal(data, &campfire); err != nil {
+		t.Fatalf("failed to unmarshal get.json: %v", err)
+	}
+
+	if campfire.FilesURL != "https://3.basecampapi.com/195539477/buckets/2085958499/chats/1069479345/uploads.json" {
+		t.Errorf("unexpected FilesURL: %q", campfire.FilesURL)
+	}
+}
+
+func TestCampfireUploadLine_UnmarshalGet(t *testing.T) {
+	data := loadCampfiresFixture(t, "upload_line_get.json")
+
+	var line CampfireLine
+	if err := json.Unmarshal(data, &line); err != nil {
+		t.Fatalf("failed to unmarshal upload_line_get.json: %v", err)
+	}
+
+	if line.ID != 1069479360 {
+		t.Errorf("expected ID 1069479360, got %d", line.ID)
+	}
+	if line.Type != "Chat::Lines::Upload" {
+		t.Errorf("expected type 'Chat::Lines::Upload', got %q", line.Type)
+	}
+	if line.Content != "" {
+		t.Errorf("expected empty content for upload line, got %q", line.Content)
+	}
+	if line.Title != "quarterly-report.pdf" {
+		t.Errorf("expected title 'quarterly-report.pdf', got %q", line.Title)
+	}
+
+	// Verify attachments
+	if len(line.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(line.Attachments))
+	}
+	att := line.Attachments[0]
+	if att.Filename != "quarterly-report.pdf" {
+		t.Errorf("expected filename 'quarterly-report.pdf', got %q", att.Filename)
+	}
+	if att.ContentType != "application/pdf" {
+		t.Errorf("expected content_type 'application/pdf', got %q", att.ContentType)
+	}
+	if att.ByteSize != 1048576 {
+		t.Errorf("expected byte_size 1048576, got %d", att.ByteSize)
+	}
+	if att.DownloadURL != "https://3.basecampapi.com/195539477/buckets/2085958499/uploads/1069479361/download/quarterly-report.pdf" {
+		t.Errorf("unexpected DownloadURL: %q", att.DownloadURL)
+	}
+	if att.Title != "quarterly-report.pdf" {
+		t.Errorf("expected attachment title 'quarterly-report.pdf', got %q", att.Title)
+	}
+	if att.URL != "https://3.basecampapi.com/195539477/buckets/2085958499/uploads/1069479361.json" {
+		t.Errorf("unexpected attachment URL: %q", att.URL)
+	}
+}
+
+func TestCampfireUploadLine_UnmarshalList(t *testing.T) {
+	data := loadCampfiresFixture(t, "uploads_list.json")
+
+	var lines []CampfireLine
+	if err := json.Unmarshal(data, &lines); err != nil {
+		t.Fatalf("failed to unmarshal uploads_list.json: %v", err)
+	}
+
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 upload lines, got %d", len(lines))
+	}
+
+	// First upload line
+	l1 := lines[0]
+	if l1.ID != 1069479360 {
+		t.Errorf("expected ID 1069479360, got %d", l1.ID)
+	}
+	if l1.Type != "Chat::Lines::Upload" {
+		t.Errorf("expected type 'Chat::Lines::Upload', got %q", l1.Type)
+	}
+	if len(l1.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment on first line, got %d", len(l1.Attachments))
+	}
+	if l1.Attachments[0].Filename != "quarterly-report.pdf" {
+		t.Errorf("expected filename 'quarterly-report.pdf', got %q", l1.Attachments[0].Filename)
+	}
+
+	// Second upload line
+	l2 := lines[1]
+	if l2.ID != 1069479365 {
+		t.Errorf("expected ID 1069479365, got %d", l2.ID)
+	}
+	if len(l2.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment on second line, got %d", len(l2.Attachments))
+	}
+	if l2.Attachments[0].Filename != "screenshot.png" {
+		t.Errorf("expected filename 'screenshot.png', got %q", l2.Attachments[0].Filename)
+	}
+	if l2.Attachments[0].ContentType != "image/png" {
+		t.Errorf("expected content_type 'image/png', got %q", l2.Attachments[0].ContentType)
+	}
+	if l2.Attachments[0].ByteSize != 204800 {
+		t.Errorf("expected byte_size 204800, got %d", l2.Attachments[0].ByteSize)
+	}
+}
+
+func TestCreateCampfireLineRequest_Marshal(t *testing.T) {
+	req := CreateCampfireLineRequest{
+		Content: "Hello team!",
+	}
+
+	out, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal CreateCampfireLineRequest: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(out, &data); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	if data["content"] != "Hello team!" {
+		t.Errorf("unexpected content: %v", data["content"])
+	}
+
+	// content_type should be omitted when empty
+	if _, exists := data["content_type"]; exists {
+		t.Errorf("content_type should be omitted when empty, got: %v", data["content_type"])
+	}
+
+	// Round-trip test
+	var roundtrip CreateCampfireLineRequest
+	if err := json.Unmarshal(out, &roundtrip); err != nil {
+		t.Fatalf("failed to unmarshal round-trip: %v", err)
+	}
+
+	if roundtrip.Content != req.Content {
+		t.Errorf("expected content %q, got %q", req.Content, roundtrip.Content)
+	}
+}
+
+func TestCreateCampfireLineRequest_MarshalWithContentType(t *testing.T) {
+	req := CreateCampfireLineRequest{
+		Content:     "<strong>Hello</strong>",
+		ContentType: LineContentTypeHTML,
+	}
+
+	out, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal CreateCampfireLineRequest: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(out, &data); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	if data["content"] != "<strong>Hello</strong>" {
+		t.Errorf("unexpected content: %v", data["content"])
+	}
+	if data["content_type"] != "text/html" {
+		t.Errorf("unexpected content_type: %v", data["content_type"])
+	}
+
+	// Round-trip test
+	var roundtrip CreateCampfireLineRequest
+	if err := json.Unmarshal(out, &roundtrip); err != nil {
+		t.Fatalf("failed to unmarshal round-trip: %v", err)
+	}
+	if roundtrip.ContentType != "text/html" {
+		t.Errorf("expected content_type %q, got %q", "text/html", roundtrip.ContentType)
+	}
+}
+
+func TestCreateCampfireLineRequest_MarshalWithPlainContentType(t *testing.T) {
+	req := CreateCampfireLineRequest{
+		Content:     "Hello team!",
+		ContentType: LineContentTypePlain,
+	}
+
+	out, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal CreateCampfireLineRequest: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(out, &data); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	if data["content_type"] != "text/plain" {
+		t.Errorf("unexpected content_type: %v", data["content_type"])
+	}
+}
+
+func TestLineContentTypeConstants(t *testing.T) {
+	if LineContentTypePlain != "text/plain" {
+		t.Errorf("expected LineContentTypePlain to be 'text/plain', got %q", LineContentTypePlain)
+	}
+	if LineContentTypeHTML != "text/html" {
+		t.Errorf("expected LineContentTypeHTML to be 'text/html', got %q", LineContentTypeHTML)
+	}
+}
+
+// newTestCampfiresService creates a CampfiresService with minimal wiring for
+// testing validation logic that runs before the generated client call.
+func newTestCampfiresService() *CampfiresService {
+	c := &Client{hooks: NoopHooks{}}
+	ac := &AccountClient{parent: c, accountID: "99999"}
+	return NewCampfiresService(ac)
+}
+
+func TestCreateLine_EmptyContent(t *testing.T) {
+	svc := newTestCampfiresService()
+	_, err := svc.CreateLine(context.Background(), 2, "")
+	if err == nil {
+		t.Fatal("expected error for empty content")
+	}
+	apiErr, ok := errors.AsType[*Error](err)
+	if !ok || apiErr.Code != CodeUsage {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+func TestCreateLine_MultipleOptions(t *testing.T) {
+	svc := newTestCampfiresService()
+	_, err := svc.CreateLine(context.Background(), 2, "hello",
+		&CreateLineOptions{ContentType: LineContentTypeHTML},
+		&CreateLineOptions{ContentType: LineContentTypePlain})
+	if err == nil {
+		t.Fatal("expected error for multiple options")
+	}
+	apiErr, ok := errors.AsType[*Error](err)
+	if !ok || apiErr.Code != CodeUsage {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+func TestCreateLine_InvalidContentType(t *testing.T) {
+	svc := newTestCampfiresService()
+	_, err := svc.CreateLine(context.Background(), 2, "hello",
+		&CreateLineOptions{ContentType: "application/pdf"})
+	if err == nil {
+		t.Fatal("expected error for invalid content_type")
+	}
+	apiErr, ok := errors.AsType[*Error](err)
+	if !ok || apiErr.Code != CodeUsage {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+// --- httptest-based service contract tests for CreateLine ---
+
+// testCampfiresServer creates an httptest.Server and a CampfiresService wired to it.
+func testCampfiresServer(t *testing.T, handler http.HandlerFunc) *CampfiresService {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	cfg := DefaultConfig()
+	cfg.BaseURL = server.URL
+	token := &StaticTokenProvider{Token: "test-token"}
+	client := NewClient(cfg, token)
+	account := client.ForAccount("99999")
+	return account.Campfires()
+}
+
+func TestCreateLine_NoOptions_Service(t *testing.T) {
+	var receivedBody map[string]any
+	fixture := loadCampfiresFixture(t, "line_get.json")
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/99999/chats/200/lines.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		w.Write(fixture)
+	})
+
+	line, err := svc.CreateLine(context.Background(), 200, "Hello team!")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if line.ID != 1069479350 {
+		t.Errorf("expected line ID 1069479350, got %d", line.ID)
+	}
+	if receivedBody["content"] != "Hello team!" {
+		t.Errorf("expected request content 'Hello team!', got %v", receivedBody["content"])
+	}
+	// content_type should not be present when no options given
+	if _, exists := receivedBody["content_type"]; exists {
+		t.Errorf("content_type should be absent with no options, got %v", receivedBody["content_type"])
+	}
+}
+
+func TestCreateLine_HTMLOption_Service(t *testing.T) {
+	var receivedBody map[string]any
+	fixture := loadCampfiresFixture(t, "line_get.json")
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		w.Write(fixture)
+	})
+
+	_, err := svc.CreateLine(context.Background(), 200, "<b>Hello</b>",
+		&CreateLineOptions{ContentType: LineContentTypeHTML})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedBody["content"] != "<b>Hello</b>" {
+		t.Errorf("expected content '<b>Hello</b>', got %v", receivedBody["content"])
+	}
+	if receivedBody["content_type"] != "text/html" {
+		t.Errorf("expected content_type 'text/html', got %v", receivedBody["content_type"])
+	}
+}
+
+func TestCreateLine_PlainOption_Service(t *testing.T) {
+	var receivedBody map[string]any
+	fixture := loadCampfiresFixture(t, "line_get.json")
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		json.Unmarshal(body, &receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		w.Write(fixture)
+	})
+
+	_, err := svc.CreateLine(context.Background(), 200, "plain text",
+		&CreateLineOptions{ContentType: LineContentTypePlain})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedBody["content_type"] != "text/plain" {
+		t.Errorf("expected content_type 'text/plain', got %v", receivedBody["content_type"])
+	}
+}
+
+func TestUpdateLine_EmptyContent(t *testing.T) {
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("server should not be called when content is empty")
+	})
+	if err := svc.UpdateLine(context.Background(), 200, 1069479350, ""); err == nil {
+		t.Fatalf("expected error for empty content")
+	}
+}
+
+func TestUpdateLine_Service(t *testing.T) {
+	var receivedBody map[string]any
+	var receivedMethod, receivedPath string
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PUT" {
+			t.Errorf("expected PUT only, got %s", r.Method)
+			return
+		}
+		receivedMethod = r.Method
+		receivedPath = r.URL.Path
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read request body: %v", err)
+			return
+		}
+		if err := json.Unmarshal(body, &receivedBody); err != nil {
+			t.Errorf("failed to unmarshal request body: %v", err)
+			return
+		}
+		w.WriteHeader(204)
+	})
+
+	if err := svc.UpdateLine(context.Background(), 200, 1069479350, "Edited!"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if receivedMethod != "PUT" {
+		t.Errorf("expected PUT, got %s", receivedMethod)
+	}
+	if receivedPath != "/99999/chats/200/lines/1069479350" {
+		t.Errorf("unexpected path: %s", receivedPath)
+	}
+	if receivedBody["content"] != "Edited!" {
+		t.Errorf("expected content 'Edited!', got %v", receivedBody["content"])
+	}
+	if len(receivedBody) != 1 {
+		t.Errorf("expected body to contain only content, got %v", receivedBody)
+	}
+}
+
+func TestChatbot_UnmarshalList(t *testing.T) {
+	data := loadCampfiresFixture(t, "chatbots_list.json")
+
+	var chatbots []Chatbot
+	if err := json.Unmarshal(data, &chatbots); err != nil {
+		t.Fatalf("failed to unmarshal chatbots_list.json: %v", err)
+	}
+
+	if len(chatbots) != 2 {
+		t.Errorf("expected 2 chatbots, got %d", len(chatbots))
+	}
+
+	// Verify first chatbot (no command_url)
+	c1 := chatbots[0]
+	if c1.ID != 1049715958 {
+		t.Errorf("expected ID 1049715958, got %d", c1.ID)
+	}
+	if c1.ServiceName != "Capistrano" {
+		t.Errorf("expected ServiceName 'Capistrano', got %q", c1.ServiceName)
+	}
+	if c1.CommandURL != "" {
+		t.Errorf("expected empty CommandURL, got %q", c1.CommandURL)
+	}
+	if c1.URL != "https://3.basecampapi.com/195539477/buckets/2085958497/chats/1069478933/integrations/1049715958.json" {
+		t.Errorf("unexpected URL: %q", c1.URL)
+	}
+	if c1.AppURL != "https://3.basecamp.com/195539477/buckets/2085958497/chats/1069478933/integrations/1049715958" {
+		t.Errorf("unexpected AppURL: %q", c1.AppURL)
+	}
+	if c1.LinesURL != "https://3.basecampapi.com/195539477/integrations/B5JQYvHsNWCoDvYGZfH1xNR9/buckets/2085958497/chats/1069478933/lines" {
+		t.Errorf("unexpected LinesURL: %q", c1.LinesURL)
+	}
+
+	// Verify timestamps are parsed
+	if c1.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be non-zero")
+	}
+	if c1.UpdatedAt.IsZero() {
+		t.Error("expected UpdatedAt to be non-zero")
+	}
+
+	// Verify second chatbot (with command_url)
+	c2 := chatbots[1]
+	if c2.ID != 1049715959 {
+		t.Errorf("expected ID 1049715959, got %d", c2.ID)
+	}
+	if c2.ServiceName != "deploy" {
+		t.Errorf("expected ServiceName 'deploy', got %q", c2.ServiceName)
+	}
+	if c2.CommandURL != "https://example.com/deploy" {
+		t.Errorf("expected CommandURL 'https://example.com/deploy', got %q", c2.CommandURL)
+	}
+}
+
+func TestChatbot_UnmarshalGet(t *testing.T) {
+	data := loadCampfiresFixture(t, "chatbot_get.json")
+
+	var chatbot Chatbot
+	if err := json.Unmarshal(data, &chatbot); err != nil {
+		t.Fatalf("failed to unmarshal chatbot_get.json: %v", err)
+	}
+
+	if chatbot.ID != 1049715958 {
+		t.Errorf("expected ID 1049715958, got %d", chatbot.ID)
+	}
+	if chatbot.ServiceName != "Capistrano" {
+		t.Errorf("expected ServiceName 'Capistrano', got %q", chatbot.ServiceName)
+	}
+	if chatbot.CommandURL != "https://example.com/command" {
+		t.Errorf("expected CommandURL 'https://example.com/command', got %q", chatbot.CommandURL)
+	}
+	if chatbot.URL != "https://3.basecampapi.com/195539477/buckets/2085958497/chats/1069478933/integrations/1049715958.json" {
+		t.Errorf("unexpected URL: %q", chatbot.URL)
+	}
+	if chatbot.AppURL != "https://3.basecamp.com/195539477/buckets/2085958497/chats/1069478933/integrations/1049715958" {
+		t.Errorf("unexpected AppURL: %q", chatbot.AppURL)
+	}
+	if chatbot.LinesURL != "https://3.basecampapi.com/195539477/integrations/B5JQYvHsNWCoDvYGZfH1xNR9/buckets/2085958497/chats/1069478933/lines" {
+		t.Errorf("unexpected LinesURL: %q", chatbot.LinesURL)
+	}
+
+	// Verify timestamps are parsed
+	if chatbot.CreatedAt.IsZero() {
+		t.Error("expected CreatedAt to be non-zero")
+	}
+	if chatbot.UpdatedAt.IsZero() {
+		t.Error("expected UpdatedAt to be non-zero")
+	}
+}
+
+func TestCreateChatbotRequest_Marshal(t *testing.T) {
+	req := CreateChatbotRequest{
+		ServiceName: "mybot",
+		CommandURL:  "https://example.com/webhook",
+	}
+
+	out, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal CreateChatbotRequest: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(out, &data); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	if data["service_name"] != "mybot" {
+		t.Errorf("unexpected service_name: %v", data["service_name"])
+	}
+	if data["command_url"] != "https://example.com/webhook" {
+		t.Errorf("unexpected command_url: %v", data["command_url"])
+	}
+
+	// Test without command_url
+	reqNoURL := CreateChatbotRequest{
+		ServiceName: "simplebot",
+	}
+	outNoURL, err := json.Marshal(reqNoURL)
+	if err != nil {
+		t.Fatalf("failed to marshal CreateChatbotRequest without command_url: %v", err)
+	}
+
+	var dataNoURL map[string]any
+	if err := json.Unmarshal(outNoURL, &dataNoURL); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	if dataNoURL["service_name"] != "simplebot" {
+		t.Errorf("unexpected service_name: %v", dataNoURL["service_name"])
+	}
+	if _, exists := dataNoURL["command_url"]; exists {
+		t.Errorf("command_url should be omitted when empty, got: %v", dataNoURL["command_url"])
+	}
+}
+
+// --- httptest-based service contract tests for ListUploads ---
+
+func TestListUploads_Service(t *testing.T) {
+	fixture := loadCampfiresFixture(t, "uploads_list.json")
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/99999/chats/200/uploads.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Total-Count", "2")
+		w.WriteHeader(200)
+		w.Write(fixture)
+	})
+
+	result, err := svc.ListUploads(context.Background(), 200, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Lines) != 2 {
+		t.Errorf("expected 2 upload lines, got %d", len(result.Lines))
+	}
+	if result.Meta.TotalCount != 2 {
+		t.Errorf("expected TotalCount 2, got %d", result.Meta.TotalCount)
+	}
+	if result.Lines[0].Type != "Chat::Lines::Upload" {
+		t.Errorf("expected type 'Chat::Lines::Upload', got %q", result.Lines[0].Type)
+	}
+	if len(result.Lines[0].Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(result.Lines[0].Attachments))
+	}
+	if result.Lines[0].Attachments[0].Filename != "quarterly-report.pdf" {
+		t.Errorf("expected filename 'quarterly-report.pdf', got %q", result.Lines[0].Attachments[0].Filename)
+	}
+}
+
+func TestListLines_SortDirection(t *testing.T) {
+	fixture := loadCampfiresFixture(t, "lines_list.json")
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("sort") != "created_at" {
+			t.Errorf("expected sort=created_at, got %q", r.URL.Query().Get("sort"))
+		}
+		if r.URL.Query().Get("direction") != "desc" {
+			t.Errorf("expected direction=desc, got %q", r.URL.Query().Get("direction"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(fixture)
+	})
+
+	result, err := svc.ListLines(context.Background(), 100, &CampfireLineListOptions{
+		Sort:      "created_at",
+		Direction: "desc",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Lines) == 0 {
+		t.Error("expected non-empty lines")
+	}
+}
+
+func TestListUploads_SortDirection(t *testing.T) {
+	fixture := loadCampfiresFixture(t, "uploads_list.json")
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("sort") != "created_at" {
+			t.Errorf("expected sort=created_at, got %q", r.URL.Query().Get("sort"))
+		}
+		if r.URL.Query().Get("direction") != "desc" {
+			t.Errorf("expected direction=desc, got %q", r.URL.Query().Get("direction"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write(fixture)
+	})
+
+	result, err := svc.ListUploads(context.Background(), 100, &CampfireUploadListOptions{
+		Sort:      "created_at",
+		Direction: "desc",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Lines) == 0 {
+		t.Error("expected non-empty uploads")
+	}
+}
+
+// --- httptest-based service contract tests for CreateUpload ---
+
+func TestCreateUpload_Service(t *testing.T) {
+	fixture := loadCampfiresFixture(t, "upload_line_get.json")
+	var receivedContentType string
+	var receivedBody []byte
+	var receivedQueryName string
+
+	svc := testCampfiresServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/99999/chats/200/uploads.json" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		receivedQueryName = r.URL.Query().Get("name")
+		receivedContentType = r.Header.Get("Content-Type")
+		receivedBody, _ = io.ReadAll(r.Body)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(201)
+		w.Write(fixture)
+	})
+
+	data := []byte("binary file content")
+	line, err := svc.CreateUpload(context.Background(), 200, "report.pdf", "application/pdf", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if line.ID != 1069479360 {
+		t.Errorf("expected line ID 1069479360, got %d", line.ID)
+	}
+	if receivedQueryName != "report.pdf" {
+		t.Errorf("expected query name 'report.pdf', got %q", receivedQueryName)
+	}
+	if receivedContentType != "application/pdf" {
+		t.Errorf("expected Content-Type 'application/pdf', got %q", receivedContentType)
+	}
+	if string(receivedBody) != "binary file content" {
+		t.Errorf("expected body 'binary file content', got %q", string(receivedBody))
+	}
+	if len(line.Attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(line.Attachments))
+	}
+	if line.Attachments[0].Filename != "quarterly-report.pdf" {
+		t.Errorf("expected filename 'quarterly-report.pdf', got %q", line.Attachments[0].Filename)
+	}
+}
+
+func TestCreateUpload_EmptyFilename(t *testing.T) {
+	svc := newTestCampfiresService()
+	_, err := svc.CreateUpload(context.Background(), 200, "", "application/pdf", bytes.NewReader([]byte("data")))
+	if err == nil {
+		t.Fatal("expected error for empty filename")
+	}
+	apiErr, ok := errors.AsType[*Error](err)
+	if !ok || apiErr.Code != CodeUsage {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+func TestCreateUpload_EmptyContentType(t *testing.T) {
+	svc := newTestCampfiresService()
+	_, err := svc.CreateUpload(context.Background(), 200, "file.pdf", "", bytes.NewReader([]byte("data")))
+	if err == nil {
+		t.Fatal("expected error for empty content type")
+	}
+	apiErr, ok := errors.AsType[*Error](err)
+	if !ok || apiErr.Code != CodeUsage {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+func TestCreateUpload_EmptyData(t *testing.T) {
+	svc := newTestCampfiresService()
+	_, err := svc.CreateUpload(context.Background(), 200, "file.pdf", "application/pdf", bytes.NewReader([]byte{}))
+	if err == nil {
+		t.Fatal("expected error for empty data")
+	}
+	apiErr, ok := errors.AsType[*Error](err)
+	if !ok || apiErr.Code != CodeUsage {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+func TestCreateUpload_NilData(t *testing.T) {
+	svc := newTestCampfiresService()
+	_, err := svc.CreateUpload(context.Background(), 200, "file.pdf", "application/pdf", nil)
+	if err == nil {
+		t.Fatal("expected error for nil data")
+	}
+	apiErr, ok := errors.AsType[*Error](err)
+	if !ok || apiErr.Code != CodeUsage {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+func TestUpdateChatbotRequest_Marshal(t *testing.T) {
+	req := UpdateChatbotRequest{
+		ServiceName: "updatedbot",
+		CommandURL:  "https://example.com/updated",
+	}
+
+	out, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("failed to marshal UpdateChatbotRequest: %v", err)
+	}
+
+	var data map[string]any
+	if err := json.Unmarshal(out, &data); err != nil {
+		t.Fatalf("failed to unmarshal to map: %v", err)
+	}
+
+	if data["service_name"] != "updatedbot" {
+		t.Errorf("unexpected service_name: %v", data["service_name"])
+	}
+	if data["command_url"] != "https://example.com/updated" {
+		t.Errorf("unexpected command_url: %v", data["command_url"])
+	}
+}

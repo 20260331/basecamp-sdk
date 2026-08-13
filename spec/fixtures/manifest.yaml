@@ -1,0 +1,342 @@
+# Fixture-completeness manifest + coverage invariant.
+#
+# Purpose: guarantee that every schema in `covered_schemas` has at least one
+# live, validated representative among the shared JSON fixtures — so that when a
+# NEW required (or behaviorally-changed) field is added to a covered schema, a
+# fixture is forced to carry it and the guard catches the omission. A checker
+# that validated only whatever entries happen to exist cannot make that
+# guarantee; the coverage invariant closes the gap.
+#
+# Enforced by scripts/check-fixture-coverage.rb (wired into `make check`). The
+# checker uses conformance/runner/ruby/schema-walker.rb for operation-entry
+# response-schema lookup; the required/type/nullability walk is its own because
+# it must be composition-aware ($ref-with-siblings + allOf), which the walker
+# is not.
+#
+# --- Entry semantics -----------------------------------------------------------
+#
+# Each `targets` entry is one of:
+#
+#   operation entry  — { id, operation: <operationId>, fixture: <path> } (pointer optional, defaults "")
+#     Validates the COMPLETE response body of `operation` (response-schema
+#     lookup prefers 200, then any 2xx, then default) against the fixture named
+#     by `fixture`. `fixture` is required — the operation supplies the schema,
+#     the fixture supplies the body to validate against it.
+#
+#   pointer entry    — { id, fixture, pointer, schema }
+#     Validates the object selected by JSON pointer `pointer` within `fixture`
+#     against the explicit component `schema`. Use this whenever the response
+#     schema cannot be inferred from an operation, or the discriminator lies:
+#       * recordings/get.json declares type "Message" on the wire but MUST
+#         validate as the generic Recording projection, not Message.
+#       * search/results.json elements declare type "Todo"/"Message"/… but MUST
+#         validate as SearchResult.
+#       * a `/content_attachments/0` element is a RichTextAttachment, not the
+#         array's parent schema.
+#     `pointer: ""` selects the whole document. `schema` names a component under
+#     components/schemas.
+#
+# --- Coverage invariant --------------------------------------------------------
+#
+# `covered_schemas` maps each schema this guard promises to keep represented to
+# the target id(s) that represent it. The checker enforces, per covered schema:
+#   * >= 1 non-excluded (active) target maps to it;
+#   * the concrete-instance rule: at least one mapped active target resolves to
+#     a concrete, non-null instance whose DECLARED ROOT schema is that component.
+#     Transitive reachability and empty arrays do NOT count — a Todo fixture with
+#     "description_attachments": [] reaches RichTextAttachment but instantiates
+#     none, so it does not cover it; a populated element (pointer
+#     .../content_attachments/0 declared RichTextAttachment) does.
+#
+# `excluded_schemas` records schemas deliberately NOT covered this round, each
+# with a reason + tracking issue. Exclusions do NOT satisfy coverage.
+#
+# --- Inventory completeness (non-self-erasing) --------------------------------
+#
+# Every component schema that declares an array-of-RichTextAttachment member (the
+# #408 rich-text-emitter class this guard exists to protect) MUST appear in
+# covered_schemas or excluded_schemas. This is derived from openapi.json, so the
+# inventory cannot silently shrink: dropping a rich-text emitter from
+# covered_schemas fails the check instead of quietly reducing coverage.
+#
+# --- Per-target validation ----------------------------------------------------
+#
+# Each target's selected instance is validated against its schema for BOTH
+# required-field presence AND type/nullability, composition-aware ($ref-with-
+# siblings + allOf are merged; anyOf/oneOf groups — including those inherited via
+# $ref/allOf — require the value to satisfy at least one branch): a missing
+# required field (including one contributed by an allOf branch), a required field
+# null against a non-nullable schema, a null array element against a non-nullable
+# item schema, a value matching none of an anyOf/oneOf's alternatives, or a value
+# whose JSON type contradicts the declared type (e.g. a string where an array is
+# required), fails the target. So a fixture that no longer matches the generated
+# types is caught, not just one missing a key.
+#
+# This is a deliberately PARTIAL structural validator (required/types/nullability/
+# arrays/$ref/allOf/at-least-one-alternative) — not a full JSON-Schema
+# implementation. See the "Scope" note in scripts/check-fixture-coverage.rb for
+# the supported subset and the keywords intentionally out of scope.
+#
+# A missing fixture, unresolvable pointer, unknown schema, or covered schema
+# with no active concrete representative -> the check FAILS.
+
+targets:
+  # 15 concrete resource GETs — pointer "" -> component schema.
+  - id: my-note-get
+    fixture: my_notes/get.json
+    pointer: ""
+    schema: MyNote
+  - id: comment-get
+    fixture: comments/get.json
+    pointer: ""
+    schema: Comment
+  - id: message-get
+    fixture: messages/get.json
+    pointer: ""
+    schema: Message
+  - id: document-get
+    fixture: documents/get.json
+    pointer: ""
+    schema: Document
+  - id: card-get
+    fixture: cards/get.json
+    pointer: ""
+    schema: Card
+  - id: todolist-get
+    fixture: todolists/get.json
+    pointer: ""
+    schema: Todolist
+  # A group is a Todolist (#544): todolists/groups/{index,show}.json.jbuilder
+  # both render todolists/_todolist.json.jbuilder, so a group is the same schema
+  # with group_position_url where a list carries groups_url. This is the
+  # representative for that half of the structural discriminator, for a group
+  # carrying a real description, and for the nullable color.
+  - id: todolist-group-get
+    fixture: todolist_groups/get.json
+    pointer: ""
+    schema: Todolist
+  - id: upload-get
+    fixture: uploads/get.json
+    pointer: ""
+    schema: Upload
+
+  # GET /uploads/{id}/versions.json returns EVENTS, not Uploads — the reason
+  # ListUploadVersionsOutput was retyped (basecamp-sdk#649). Built from
+  # app/views/api/uploads/versions/_version.json.jbuilder over
+  # recordings/events/_event.json.jbuilder.
+  #
+  # Element 0 is the blob_changed replacement and the only one with
+  # "current": true — the renderer passes current_event: @events.first, so
+  # exactly one element per response carries it. Element 2 has NO upload object
+  # at all: its recordable no longer resolves, so the partial's
+  # `if upload = uploads[event.recordable_gid]` is false. That element pins the
+  # optionality and is deliberately not the one covering UploadVersionFile,
+  # since the concrete-instance rule needs a non-null representative.
+  - id: upload-version-0
+    fixture: uploads/versions.json
+    pointer: "/0"
+    schema: UploadVersion
+  - id: upload-version-file-0
+    fixture: uploads/versions.json
+    pointer: "/0/upload"
+    schema: UploadVersionFile
+  - id: upload-version-recordable-gone
+    fixture: uploads/versions.json
+    pointer: "/2"
+    schema: UploadVersion
+  - id: cloud-file-get
+    fixture: cloud_files/get.json
+    pointer: ""
+    schema: CloudFile
+  - id: google-document-get
+    fixture: google_documents/get.json
+    pointer: ""
+    schema: GoogleDocument
+  - id: schedule-entry-get
+    fixture: schedules/entry_get.json
+    pointer: ""
+    schema: ScheduleEntry
+  # The upcoming-schedule report renders BC3's reduced calendar partials, not the
+  # per-resource ones, so it has its own shape family (#635). An operation entry
+  # validates the WHOLE envelope, which is the point: the fabricated bodies the
+  # per-SDK tests used to carry are exactly how the mismatch survived six SDKs.
+  - id: upcoming-schedule-get
+    operation: GetUpcomingSchedule
+    fixture: schedules/upcoming.json
+  # Element-level representatives, so the coverage invariant's concrete-instance
+  # rule is satisfied for each reduced component rather than only reached.
+  - id: upcoming-schedule-entry-0
+    fixture: schedules/upcoming.json
+    pointer: "/schedule_entries/0"
+    schema: UpcomingScheduleEntry
+  # The recurring array's element is the all-day variant: `recurring` true and
+  # starts_at/ends_at rendered as bare dates rather than timestamps.
+  - id: upcoming-schedule-occurrence-0
+    fixture: schedules/upcoming.json
+    pointer: "/recurring_schedule_entry_occurrences/0"
+    schema: UpcomingScheduleEntry
+  # A completed to-do: carries the optional `completion` block and both dates.
+  - id: upcoming-assignable-todo
+    fixture: schedules/upcoming.json
+    pointer: "/assignables/0"
+    schema: UpcomingAssignable
+  # A card: no `completion` key, null starts_on/due_on, and the relative
+  # completion_url the non-to-do branch renders through a `_path` helper.
+  - id: upcoming-assignable-card
+    fixture: schedules/upcoming.json
+    pointer: "/assignables/1"
+    schema: UpcomingAssignable
+  - id: upcoming-schedule-bucket
+    fixture: schedules/upcoming.json
+    pointer: "/schedule_entries/0/bucket"
+    schema: UpcomingScheduleBucket
+  - id: upcoming-schedule-person
+    fixture: schedules/upcoming.json
+    pointer: "/schedule_entries/0/creator"
+    schema: UpcomingSchedulePerson
+  - id: upcoming-assignable-parent
+    fixture: schedules/upcoming.json
+    pointer: "/assignables/0/parent"
+    schema: UpcomingAssignableParent
+  - id: upcoming-assignable-completion
+    fixture: schedules/upcoming.json
+    pointer: "/assignables/0/completion"
+    schema: UpcomingAssignableCompletion
+  - id: forward-get
+    fixture: forwards/get.json
+    pointer: ""
+    schema: Forward
+  - id: forward-reply-get
+    fixture: forwards/reply_get.json
+    pointer: ""
+    schema: ForwardReply
+  - id: client-approval-get
+    fixture: client_approvals/get.json
+    pointer: ""
+    schema: ClientApproval
+  - id: client-correspondence-get
+    fixture: client_correspondences/get.json
+    pointer: ""
+    schema: ClientCorrespondence
+  - id: client-reply-get
+    fixture: client_replies/get.json
+    pointer: ""
+    schema: ClientReply
+  - id: question-answer-get
+    fixture: checkins/answer.json
+    pointer: ""
+    schema: QuestionAnswer
+  - id: recording-get
+    # Discriminator lies: wire type is "Message"; validate as generic Recording.
+    fixture: recordings/get.json
+    pointer: ""
+    schema: Recording
+  # bubble_up_url is optional on Recording — recordings/_recording.json.jbuilder
+  # emits it only when the caller passes bubbleupable, and todolists/_todolist is
+  # the only partial that does. recordings/get.json is a Message and correctly
+  # omits it, so this Todolist-shaped element is the field-bearing representative.
+  - id: recording-list-todolist
+    fixture: recordings/list.json
+    pointer: "/2"
+    schema: Recording
+  - id: todo-get
+    fixture: todos/get.json
+    pointer: ""
+    schema: Todo
+
+  # Polymorphic search projection: element declares its recording type, but
+  # validates as SearchResult.
+  - id: search-result-0
+    fixture: search/results.json
+    pointer: "/0"
+    schema: SearchResult
+  # Todolists are searchable (Search::Type::TYPE_FILTER_MAPPING maps
+  # "Todo" => %w[Todo Todolist]) and api_search_result_template_path falls through
+  # to to_recordable_partial_path → todolists/todolist, which passes
+  # bubbleupable: true. So a Todolist search result carries bubble_up_url while
+  # the other result types do not — this is that representative.
+  - id: search-result-todolist
+    fixture: search/results.json
+    pointer: "/3"
+    schema: SearchResult
+
+  # Two concrete RichTextAttachment instances (populated elements, not empty
+  # arrays) — the only way to cover RichTextAttachment per the concrete-instance
+  # rule.
+  - id: richtext-comment-0
+    fixture: comments/get.json
+    pointer: "/content_attachments/0"
+    schema: RichTextAttachment
+  - id: richtext-upload-0
+    fixture: uploads/get.json
+    pointer: "/description_attachments/0"
+    schema: RichTextAttachment
+
+  # Gauge is a docked tool: bc3 app/views/api/gauges/_gauge.json.jbuilder renders
+  # the base recordings/recording partial (no commentable/boostable), then — only
+  # when `gauge.any_needles?` — the rich-text partial for the last needle plus
+  # enabled/last_needle_*/previous_needle_position. The fixture is the
+  # has-needles variant so the optional description_attachments array is present.
+  - id: gauge-get
+    fixture: gauges/get.json
+    pointer: ""
+    schema: Gauge
+  # gauges/needles/_needle.json.jbuilder renders the base partial WITH
+  # commentable + boostable, then rich text, color, and position.
+  - id: gauge-needle-get
+    fixture: gauges/needle_get.json
+    pointer: ""
+    schema: GaugeNeedle
+
+covered_schemas:
+  MyNote: [my-note-get]
+  Comment: [comment-get]
+  Message: [message-get]
+  Document: [document-get]
+  Card: [card-get]
+  Todolist: [todolist-get, todolist-group-get]
+  Upload: [upload-get]
+  UploadVersion: [upload-version-0, upload-version-recordable-gone]
+  UploadVersionFile: [upload-version-file-0]
+  CloudFile: [cloud-file-get]
+  GoogleDocument: [google-document-get]
+  ScheduleEntry: [schedule-entry-get]
+  UpcomingScheduleEntry: [upcoming-schedule-entry-0, upcoming-schedule-occurrence-0]
+  UpcomingAssignable: [upcoming-assignable-todo, upcoming-assignable-card]
+  UpcomingScheduleBucket: [upcoming-schedule-bucket]
+  UpcomingSchedulePerson: [upcoming-schedule-person]
+  UpcomingAssignableParent: [upcoming-assignable-parent]
+  UpcomingAssignableCompletion: [upcoming-assignable-completion]
+  Forward: [forward-get]
+  ForwardReply: [forward-reply-get]
+  ClientApproval: [client-approval-get]
+  ClientCorrespondence: [client-correspondence-get]
+  ClientReply: [client-reply-get]
+  QuestionAnswer: [question-answer-get]
+  Recording: [recording-get, recording-list-todolist]
+  Todo: [todo-get]
+  SearchResult: [search-result-0, search-result-todolist]
+  RichTextAttachment: [richtext-comment-0, richtext-upload-0]
+  Gauge: [gauge-get]
+  GaugeNeedle: [gauge-needle-get]
+
+excluded_schemas:
+  TimelineAttachment:
+    reason: >-
+      No shared JSON fixture. TimelineAttachment is the optional-field superset
+      over a timeline event's upload-recording and rich-text/blob attachment
+      variants; the upload variant carries the full recording projection,
+      including a description_attachments RichTextAttachment array. It is
+      exercised only inline in the per-SDK timeline tests (the Upload-variant and
+      blob-variant fixtures), so its rich-text array has no shared-fixture
+      representative. Its round-trip is proven by those inline tests.
+    issue: 434
+  EverythingFile:
+    reason: >-
+      No shared JSON fixture. EverythingFile is the /files.json optional-field
+      superset, exercised only inline in the per-SDK everything Files tests
+      (go/pkg/basecamp/everything_test.go and the TS/Ruby/Python everything
+      service tests), so its optional description_attachments and
+      content_attachments RichTextAttachment arrays have no shared-fixture
+      representative. Its rich-text round-trip is proven by those inline tests.
+    issue: 434

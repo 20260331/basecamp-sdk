@@ -1,0 +1,48 @@
+queries:
+  - uses: security-and-quality
+
+paths:
+  - .github/
+  - go/
+  - typescript/
+  - ruby/
+  - swift/
+  - kotlin/
+  - python/
+
+paths-ignore:
+  # Generated SDK code (fix in the generator or spec, not here).
+  # Note: paths-ignore only prevents source-level extraction (JS, Ruby).
+  # For compiled languages (Go, Swift, Kotlin), generated code enters the
+  # database via build tracing — the workflow's SARIF filter step strips
+  # those alerts before upload.
+  - go/pkg/generated/
+  - typescript/src/generated/
+  - typescript/dist/
+  - ruby/lib/basecamp/generated/
+  - swift/Sources/Basecamp/Generated/
+  - kotlin/sdk/src/commonMain/kotlin/com/basecamp/sdk/generated/
+  # python/src/basecamp/generated/ is deliberately NOT listed. It holds two
+  # hand-written files — services/_base.py and services/_async_base.py, the HTTP,
+  # retry and pagination plumbing (AGENTS.md exempts them from the generator) —
+  # i.e. exactly the code most worth scanning. paths-ignore has no negation, so
+  # excluding the directory would silently drop them. If generated Python turns
+  # out to be noisy, narrow it in codeql.yml's SARIF filter instead: that step is
+  # a jq test() regex and can express "generated/ but not services/_".
+  # Test infrastructure
+  - conformance/
+  - kotlin/conformance/
+
+query-filters:
+  - exclude:
+      kind: [diagnostic, metric]
+  # Kotlin composites deliberately share a name with the generated service they
+  # extend (SPEC.md §18 "Hand-Written Composite Methods"). This Java naming query
+  # flags the convention itself, so it fires for every current and future
+  # composite. The filter is global, but the id is Java-specific and the only
+  # .java sources here (spec/smithy-bare-arrays/) are outside `paths:` above and
+  # outside the java-kotlin build, so no other analysis loses coverage. That
+  # holds only while those two conditions do: adding a Java tree to `paths:` or
+  # to the build would silently suppress this query there too.
+  - exclude:
+      id: java/class-name-matches-super-class

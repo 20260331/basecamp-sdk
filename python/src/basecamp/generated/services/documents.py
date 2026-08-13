@@ -1,0 +1,116 @@
+# @generated from OpenAPI spec — do not edit manually
+
+from __future__ import annotations
+
+from typing import Any
+
+from basecamp.generated.services._base import BaseService
+from basecamp.generated.services._async_base import AsyncBaseService
+from basecamp._pagination import ListResult
+from basecamp.hooks import OperationInfo
+
+
+class DocumentsService(BaseService):
+    def get(self, *, document_id: int) -> dict[str, Any]:
+        return self._request(
+            OperationInfo(service="documents", operation="get", is_mutation=False, resource_id=document_id),
+            "GET",
+            f"/documents/{document_id}",
+            operation="GetDocument",
+        )
+
+    def replace(self, *, document_id: int, title: str | None = None, content: str | None = None) -> dict[str, Any]:
+        return self._request(
+            OperationInfo(service="documents", operation="replace", is_mutation=True, resource_id=document_id),
+            "PUT",
+            f"/documents/{document_id}",
+            json_body=self._compact(title=title, content=content),
+            operation="ReplaceDocument",
+        )
+
+    def list(self, *, vault_id: int, page: int | None = None, max_items: int | None = None) -> ListResult:
+        return self._request_paginated(
+            OperationInfo(service="documents", operation="list", is_mutation=False, resource_id=vault_id),
+            f"/vaults/{vault_id}/documents.json",
+            params=self._compact(page=page),
+            max_items=max_items,
+            operation="ListDocuments",
+        )
+
+    def create(
+        self,
+        *,
+        vault_id: int,
+        title: str,
+        content: str | None = None,
+        status: str | None = None,
+        subscriptions: list[int] | None = None,
+        visible_to_clients: bool | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            OperationInfo(service="documents", operation="create", is_mutation=True, resource_id=vault_id),
+            "POST",
+            f"/vaults/{vault_id}/documents.json",
+            json_body=self._compact(
+                title=title,
+                content=content,
+                status=status,
+                subscriptions=subscriptions,
+                visible_to_clients=visible_to_clients,
+            ),
+            operation="CreateDocument",
+        )
+
+
+class AsyncDocumentsService(AsyncBaseService):
+    async def get(self, *, document_id: int) -> dict[str, Any]:
+        return await self._request(
+            OperationInfo(service="documents", operation="get", is_mutation=False, resource_id=document_id),
+            "GET",
+            f"/documents/{document_id}",
+            operation="GetDocument",
+        )
+
+    async def replace(
+        self, *, document_id: int, title: str | None = None, content: str | None = None
+    ) -> dict[str, Any]:
+        return await self._request(
+            OperationInfo(service="documents", operation="replace", is_mutation=True, resource_id=document_id),
+            "PUT",
+            f"/documents/{document_id}",
+            json_body=self._compact(title=title, content=content),
+            operation="ReplaceDocument",
+        )
+
+    async def list(self, *, vault_id: int, page: int | None = None, max_items: int | None = None) -> ListResult:
+        return await self._request_paginated(
+            OperationInfo(service="documents", operation="list", is_mutation=False, resource_id=vault_id),
+            f"/vaults/{vault_id}/documents.json",
+            params=self._compact(page=page),
+            max_items=max_items,
+            operation="ListDocuments",
+        )
+
+    async def create(
+        self,
+        *,
+        vault_id: int,
+        title: str,
+        content: str | None = None,
+        status: str | None = None,
+        subscriptions: list[int] | None = None,
+        visible_to_clients: bool | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            OperationInfo(service="documents", operation="create", is_mutation=True, resource_id=vault_id),
+            "POST",
+            f"/vaults/{vault_id}/documents.json",
+            json_body=self._compact(
+                title=title,
+                content=content,
+                status=status,
+                subscriptions=subscriptions,
+                visible_to_clients=visible_to_clients,
+            ),
+            operation="CreateDocument",
+        )

@@ -1,0 +1,207 @@
+"""Tests for generated tools service routes."""
+
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+import respx
+
+from basecamp import AsyncClient, Client, ValidationError
+from basecamp.hooks import BasecampHooks, OperationInfo
+
+
+class _RecordingHooks(BasecampHooks):
+    def __init__(self) -> None:
+        self.operations: list[OperationInfo] = []
+
+    def on_operation_start(self, info: OperationInfo) -> None:
+        self.operations.append(info)
+
+
+def _tool(tool_id: int = 800, *, title: str = "Message Board") -> dict:
+    return {
+        "id": tool_id,
+        "name": "message_board",
+        "title": title,
+        "enabled": True,
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z",
+    }
+
+
+class TestSyncTools:
+    @respx.mock
+    def test_create_posts_to_bucket_scoped_dock_tools_path(self):
+        route = respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(201, json=_tool(title="Message Board (Copy)"))
+        )
+
+        account = Client(access_token="test-token").for_account("12345")
+        result = account.tools.create(
+            bucket_id=456,
+            tool_type="Message::Board",
+            title="Message Board (Copy)",
+        )
+
+        assert route.called
+        request = route.calls[0].request
+        assert request.method == "POST"
+        assert json.loads(request.content) == {
+            "tool_type": "Message::Board",
+            "title": "Message Board (Copy)",
+        }
+        assert result["id"] == 800
+
+    @respx.mock
+    def test_create_omits_title_when_not_provided(self):
+        route = respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(201, json=_tool())
+        )
+
+        account = Client(access_token="test-token").for_account("12345")
+        account.tools.create(bucket_id=456, tool_type="Message::Board")
+
+        assert route.called
+        assert json.loads(route.calls[0].request.content) == {"tool_type": "Message::Board"}
+
+    @respx.mock
+    def test_create_operation_metadata_scopes_project_with_null_resource(self):
+        respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(201, json=_tool())
+        )
+
+        hooks = _RecordingHooks()
+        account = Client(access_token="test-token", hooks=hooks).for_account("12345")
+        account.tools.create(bucket_id=456, tool_type="Message::Board")
+
+        assert len(hooks.operations) == 1
+        info = hooks.operations[0]
+        assert info.service == "tools"
+        assert info.operation == "create"
+        assert info.project_id == 456
+        assert info.resource_id is None
+
+    @respx.mock
+    def test_create_visible_to_clients_tristate(self):
+        # visible_to_clients is tri-state: unset omits the key (_compact drops None),
+        # true/false are sent verbatim. An explicit false must reach the wire. Only
+        # Chat::Transcript and Kanban::Board honor it; all other tool types ignore it.
+        route = respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(201, json=_tool())
+        )
+        account = Client(access_token="test-token").for_account("12345")
+
+        account.tools.create(bucket_id=456, tool_type="Chat::Transcript")
+        assert "visible_to_clients" not in json.loads(route.calls[-1].request.content)
+
+        account.tools.create(bucket_id=456, tool_type="Chat::Transcript", visible_to_clients=True)
+        assert json.loads(route.calls[-1].request.content)["visible_to_clients"] is True
+
+        account.tools.create(bucket_id=456, tool_type="Chat::Transcript", visible_to_clients=False)
+        body = json.loads(route.calls[-1].request.content)
+        assert "visible_to_clients" in body
+        assert body["visible_to_clients"] is False
+
+    @respx.mock
+    def test_create_raises_validation_error_on_422(self):
+        route = respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(422, json={"error": "Tool type is not included in the list"})
+        )
+
+        account = Client(access_token="test-token").for_account("12345")
+        with pytest.raises(ValidationError):
+            account.tools.create(bucket_id=456, tool_type="Bogus::Tool")
+
+        assert route.call_count == 1
+
+
+class TestAsyncTools:
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_create_posts_to_bucket_scoped_dock_tools_path(self):
+        route = respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(201, json=_tool(title="Message Board (Copy)"))
+        )
+
+        account = AsyncClient(access_token="test-token").for_account("12345")
+        result = await account.tools.create(
+            bucket_id=456,
+            tool_type="Message::Board",
+            title="Message Board (Copy)",
+        )
+
+        assert route.called
+        request = route.calls[0].request
+        assert request.method == "POST"
+        assert json.loads(request.content) == {
+            "tool_type": "Message::Board",
+            "title": "Message Board (Copy)",
+        }
+        assert result["id"] == 800
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_create_omits_title_when_not_provided(self):
+        route = respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(201, json=_tool())
+        )
+
+        account = AsyncClient(access_token="test-token").for_account("12345")
+        await account.tools.create(bucket_id=456, tool_type="Message::Board")
+
+        assert route.called
+        assert json.loads(route.calls[0].request.content) == {"tool_type": "Message::Board"}
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_create_operation_metadata_scopes_project_with_null_resource(self):
+        respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(201, json=_tool())
+        )
+
+        hooks = _RecordingHooks()
+        account = AsyncClient(access_token="test-token", hooks=hooks).for_account("12345")
+        await account.tools.create(bucket_id=456, tool_type="Message::Board")
+
+        assert len(hooks.operations) == 1
+        info = hooks.operations[0]
+        assert info.service == "tools"
+        assert info.operation == "create"
+        assert info.project_id == 456
+        assert info.resource_id is None
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_create_visible_to_clients_tristate(self):
+        # Async counterpart of the sync tri-state test: unset omits the key,
+        # true/false are sent verbatim, and an explicit false reaches the wire.
+        route = respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(201, json=_tool())
+        )
+        account = AsyncClient(access_token="test-token").for_account("12345")
+
+        await account.tools.create(bucket_id=456, tool_type="Chat::Transcript")
+        assert "visible_to_clients" not in json.loads(route.calls[-1].request.content)
+
+        await account.tools.create(bucket_id=456, tool_type="Chat::Transcript", visible_to_clients=True)
+        assert json.loads(route.calls[-1].request.content)["visible_to_clients"] is True
+
+        await account.tools.create(bucket_id=456, tool_type="Chat::Transcript", visible_to_clients=False)
+        body = json.loads(route.calls[-1].request.content)
+        assert "visible_to_clients" in body
+        assert body["visible_to_clients"] is False
+
+    @pytest.mark.asyncio
+    @respx.mock
+    async def test_create_raises_validation_error_on_422(self):
+        route = respx.post("https://3.basecampapi.com/12345/buckets/456/dock/tools.json").mock(
+            return_value=httpx.Response(422, json={"error": "Tool type is not included in the list"})
+        )
+
+        account = AsyncClient(access_token="test-token").for_account("12345")
+        with pytest.raises(ValidationError):
+            await account.tools.create(bucket_id=456, tool_type="Bogus::Tool")
+
+        assert route.call_count == 1

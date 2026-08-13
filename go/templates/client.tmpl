@@ -1,0 +1,1853 @@
+// RequestEditorFn is the function signature for the RequestEditor callback function
+type RequestEditorFn func(ctx context.Context, req *http.Request) error
+
+// Doer performs HTTP requests.
+//
+// The standard http.Client implements this interface.
+type HttpRequestDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
+{{$clientTypeName := opts.OutputOptions.ClientTypeName -}}
+
+// RetryConfig configures retry behavior for idempotent operations.
+type RetryConfig struct {
+	// MaxRetries is the TOTAL number of attempts for an idempotent operation,
+	// including the initial request — not the number of retries after the first
+	// attempt (default: 3, so up to 3 attempts total). A value of 0 is accepted
+	// as a compatibility exception and means a single attempt with no retry; a
+	// negative value is a configuration error rejected by WithRetryConfig and
+	// doWithRetry.
+	MaxRetries int
+	// BaseDelay is the initial delay between retries (default: 1s)
+	BaseDelay time.Duration
+	// MaxDelay is the maximum delay between retries (default: 30s)
+	MaxDelay time.Duration
+	// Multiplier is the exponential backoff multiplier (default: 2.0)
+	Multiplier float64
+}
+
+// DefaultRetryConfig returns the default retry configuration.
+func DefaultRetryConfig() RetryConfig {
+	return RetryConfig{
+		MaxRetries: 3,
+		BaseDelay:  1 * time.Second,
+		MaxDelay:   30 * time.Second,
+		Multiplier: 2.0,
+	}
+}
+
+// {{ $clientTypeName }} which conforms to the OpenAPI3 specification for this service.
+type {{ $clientTypeName }} struct {
+	// The endpoint of the server conforming to this interface, with scheme,
+	// https://api.deepmap.com for example. This can contain a path relative
+	// to the server, such as https://api.deepmap.com/dev-test, and all the
+	// paths in the swagger spec will be appended to the server.
+	Server string
+
+	// Doer for performing requests, typically a *http.Client with any
+	// customized settings, such as certificate chains.
+	Client HttpRequestDoer
+
+	// A list of callbacks for modifying requests which are generated before sending over
+	// the network.
+	RequestEditors []RequestEditorFn
+
+	// RetryConfig for idempotent operations
+	RetryConfig RetryConfig
+
+	// Logger for debug output (optional)
+	Logger *slog.Logger
+}
+
+// ClientOption allows setting custom parameters during construction
+type ClientOption func(*{{ $clientTypeName }}) error
+
+// Creates a new {{ $clientTypeName }}, with reasonable defaults
+func NewClient(server string, opts ...ClientOption) (*{{ $clientTypeName }}, error) {
+    // create a client with sane default values
+    client := {{ $clientTypeName }}{
+        Server:      server,
+        RetryConfig: DefaultRetryConfig(),
+    }
+    // mutate client and add all optional params
+    for _, o := range opts {
+        if err := o(&client); err != nil {
+            return nil, err
+        }
+    }
+    // ensure the server URL always has a trailing slash
+    if !strings.HasSuffix(client.Server, "/") {
+        client.Server += "/"
+    }
+    // create httpClient, if not already present
+    if client.Client == nil {
+        client.Client = &http.Client{}
+    }
+    return &client, nil
+}
+
+// WithHTTPClient allows overriding the default Doer, which is
+// automatically created using http.Client. This is useful for tests.
+func WithHTTPClient(doer HttpRequestDoer) ClientOption {
+	return func(c *{{ $clientTypeName }}) error {
+		c.Client = doer
+		return nil
+	}
+}
+
+// WithRequestEditorFn allows setting up a callback function, which will be
+// called right before sending the request. This can be used to mutate the request.
+func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
+	return func(c *{{ $clientTypeName }}) error {
+		c.RequestEditors = append(c.RequestEditors, fn)
+		return nil
+	}
+}
+
+// effectiveMaxAttempts resolves RetryConfig.MaxRetries (a TOTAL attempt count)
+// into the number of attempts an idempotent operation should make:
+//   - MaxRetries < 0  → configuration error (a plain error; the low-level
+//     generated package has no BasecampError usage type).
+//   - MaxRetries == 0 → 1 attempt (compatibility exception; no retry).
+//   - MaxRetries > 0  → MaxRetries attempts.
+//
+// Every non-error result is >= 1, so doWithRetry always makes at least one
+// attempt (never returns a nil response with a nil error).
+func (cfg RetryConfig) effectiveMaxAttempts() (int, error) {
+	if cfg.MaxRetries < 0 {
+		return 0, fmt.Errorf("basecamp: invalid RetryConfig: MaxRetries must be >= 0, got %d", cfg.MaxRetries)
+	}
+	if cfg.MaxRetries == 0 {
+		return 1, nil
+	}
+	return cfg.MaxRetries, nil
+}
+
+// WithRetryConfig allows setting custom retry configuration for idempotent operations.
+// It returns a configuration error if cfg.MaxRetries is negative.
+func WithRetryConfig(cfg RetryConfig) ClientOption {
+	return func(c *{{ $clientTypeName }}) error {
+		if _, err := cfg.effectiveMaxAttempts(); err != nil {
+			return err
+		}
+		c.RetryConfig = cfg
+		return nil
+	}
+}
+
+// WithLogger allows setting a custom logger for debug output.
+func WithLogger(logger *slog.Logger) ClientOption {
+	return func(c *{{ $clientTypeName }}) error {
+		c.Logger = logger
+		return nil
+	}
+}
+
+// defaultRetryOn is behavior-model.json's declared default, applied only when an
+// operation carries no x-basecamp-retry.retryOn — which cannot happen for a
+// generated call site.
+var defaultRetryOn = []int{http.StatusTooManyRequests, http.StatusServiceUnavailable}
+
+// isRetryableStatus reports whether the status is in the operation's DECLARED
+// retry_on set. The set is per-operation and exhaustive: a status the spec never
+// declared retryable — including 500, 502, and 504 — is not retried, and is
+// surfaced to the caller on the first attempt. ParseHTTPError still classifies
+// those statuses as retryable errors for the caller's benefit; that is a
+// caller-facing hint and deliberately does not widen this gate.
+func isRetryableStatus(statusCode int, operationId string) bool {
+	// Only an ABSENT entry falls back. A present-but-empty set is an operation
+	// declaring "never retry on any status", which is not the same as declaring
+	// nothing — collapsing the two would silently re-enable 429/503 retries on an
+	// operation that opted out.
+	retryOn, ok := operationRetryOn[operationId]
+	if !ok {
+		retryOn = defaultRetryOn
+	}
+	for _, status := range retryOn {
+		if status == statusCode {
+			return true
+		}
+	}
+	return false
+}
+
+// captureReplayBody inspects the finalized first-attempt request and returns a
+// closure that reproduces its body on later attempts, plus the ContentLength to
+// restore each attempt. When retriable is false the body cannot be safely
+// replayed, so the caller makes a single attempt streaming the body as-is.
+//
+// Replay contract (documented; net/http-consistent): req.GetBody, when present,
+// DEFINES the request body for replay — exactly as the standard library's own
+// redirect handling uses it. There is no reliable way to detect whether an
+// editor mutated req.Body out of sync with req.GetBody (an editor can Reset the
+// underlying reader in place, which no identity check can see), so we make
+// GetBody authoritative: this attempt is ALSO normalized to send GetBody()'s
+// bytes, so every attempt — first and retries — ships identical bytes. A
+// retrying request's body is therefore changed by an editor only through
+// req.GetBody (set req.Body and req.GetBody together, as net/http requires).
+//
+// A body WITHOUT a GetBody snapshot is an arbitrary, single-use stream. It is
+// NOT buffered or retried: buffering would risk unbounded memory, and a blocking
+// reader cannot be interrupted (there is no general way to abort an io.Reader),
+// so such a request is sent exactly once. In-memory bodies that net/http can
+// snapshot (*bytes.Reader/*bytes.Buffer/*strings.Reader — the readers the typed
+// and generated builders use) already carry a GetBody and so replay normally;
+// only a caller passing a genuinely streaming reader to a raw *WithBody method
+// forgoes retries, which is the safe behavior for an unrewindable stream.
+// sameReader reports whether two request bodies are the same value. Comparing
+// io.ReadCloser interface values panics if their dynamic type is not comparable
+// (e.g. a struct with a slice field used directly as the body); such a body was
+// necessarily supplied by an editor, so recovering to false — "not the same",
+// which disables replay — is the safe answer.
+func sameReader(a, b io.ReadCloser) (same bool) {
+	defer func() { _ = recover() }()
+	return a == b
+}
+
+// captureReplayBody decides, once, how a retry reproduces the FIRST finalized
+// request body. It never rewrites req.Body: attempt 1 always sends the body
+// exactly as buildRequest + the request editors left it, so an editor that
+// compresses/encrypts/transforms the payload (and sets matching headers) is
+// honored — even when no retry occurs. builderBody is req.Body as buildRequest
+// produced it, BEFORE the editors ran.
+//
+// A retry replays via req.GetBody, exactly as net/http replays a body on a
+// 307/308 redirect. That is only sound when the builder's body survived the
+// editors unchanged (so its GetBody still describes req.Body). If an editor
+// REPLACED req.Body, the builder's GetBody is stale and the finalized bytes
+// cannot be reproduced, so the request is sent once rather than retried with the
+// wrong body. (An editor that mutates the body IN PLACE without updating GetBody
+// is undetectable and, like a net/http redirect, would replay GetBody's
+// snapshot; editors should replace the body, or keep req.GetBody in sync.)
+func captureReplayBody(req *http.Request, builderBody io.ReadCloser, retryEligible bool) (replay func() (io.ReadCloser, error), contentLength int64, retriable bool, err error) {
+	// A nil body (GET/HEAD): a retry reproduces the nil body faithfully.
+	if req.Body == nil {
+		return nil, req.ContentLength, true, nil
+	}
+	// An explicitly empty body (http.NoBody): always reproducible — replay the
+	// stateless sentinel so retries send a non-nil empty body with identical
+	// (empty) transfer framing.
+	if req.Body == http.NoBody {
+		return func() (io.ReadCloser, error) { return http.NoBody, nil }, req.ContentLength, true, nil
+	}
+	if !retryEligible {
+		return nil, req.ContentLength, false, nil
+	}
+	// Replayable only if the builder's body survived the editors unchanged and
+	// carries a usable GetBody. Probe GetBody (without disturbing the finalized
+	// req.Body sent on attempt 1); on failure or an editor replacement, send once.
+	if req.GetBody != nil && sameReader(req.Body, builderBody) {
+		rc, gErr := req.GetBody()
+		if gErr != nil {
+			return nil, req.ContentLength, false, nil
+		}
+		_ = rc.Close()
+		return req.GetBody, req.ContentLength, true, nil
+	}
+	return nil, req.ContentLength, false, nil
+}
+
+// closeOnceBody wraps a request body so Close is idempotent. doWithRetry installs
+// a replay body before the request editors run (so a body-aware editor observes
+// it), then owns that handle: it closes it after the editor phase regardless of
+// whether an editor replaced req.Body — closing it here plus the routine close of
+// the current req.Body would otherwise double-close the same handle when the
+// editor left it in place, or leak it when the editor swapped it out.
+type closeOnceBody struct {
+	rc     io.ReadCloser
+	closed bool
+}
+
+func (b *closeOnceBody) Read(p []byte) (int, error) { return b.rc.Read(p) }
+func (b *closeOnceBody) Close() error {
+	if b.closed {
+		return nil
+	}
+	b.closed = true
+	return b.rc.Close()
+}
+
+// doWithRetry executes a request with retry logic for idempotent operations.
+func (c *{{ $clientTypeName }}) doWithRetry(ctx context.Context, buildRequest func() (*http.Request, error), isIdempotent bool, operationId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	// MaxRetries is a TOTAL attempt count. Re-validate here (not just in
+	// WithRetryConfig) because RetryConfig is publicly mutable after client
+	// construction.
+	maxAttempts, err := c.RetryConfig.effectiveMaxAttempts()
+	if err != nil {
+		return nil, err
+	}
+	if !isIdempotent {
+		maxAttempts = 1
+	}
+	// Apply the per-operation retry ceiling from x-basecamp-retry as an upper
+	// bound on attempts: effective attempts = min(client cap, op ceiling). The
+	// ceiling can only reduce attempts below the client cap, never raise them, so
+	// a client that lowered its cap (e.g. to disable retries) is still honored.
+	if opMax, ok := operationRetryMax[operationId]; ok && opMax > 0 && opMax < maxAttempts {
+		maxAttempts = opMax
+	}
+
+	var lastResp *http.Response
+	var lastErr error
+	delay := c.RetryConfig.BaseDelay
+
+	// Replay state captured from the first finalized request (see
+	// captureReplayBody). buildRequest recreates the request from the caller's
+	// now-drained io.Reader on every attempt, so the raw *WithBody methods would
+	// otherwise ship an empty (or mid-stream) body on retries.
+	var bodyReplay func() (io.ReadCloser, error)
+	var replayContentLength int64
+	retryEligible := isIdempotent && maxAttempts > 1
+
+	// installReplay closes the current req.Body and swaps in a fresh replay of the
+	// captured first-attempt body (or nil when there is no body), restoring
+	// GetBody and ContentLength. It returns the installed handle (wrapped so Close
+	// is idempotent) so a retry's pre-editor caller can own and close it after the
+	// editor phase. On a retry it runs BOTH before applyEditors — so body-aware
+	// editors (e.g. one computing a Digest/HMAC header) observe and sign the bytes
+	// that will actually be sent — AND after, so the first finalized body stays
+	// authoritative (an editor cannot change a retry's body).
+	installReplay := func(req *http.Request) (io.ReadCloser, error) {
+		if req.Body != nil {
+			_ = req.Body.Close()
+		}
+		if bodyReplay == nil {
+			req.Body = nil
+			req.GetBody = nil
+			req.ContentLength = replayContentLength
+			return nil, nil
+		}
+		rc, bErr := bodyReplay()
+		if bErr != nil {
+			return nil, bErr
+		}
+		// Preserve the http.NoBody sentinel unwrapped: net/http keys request
+		// framing off body identity — a wrapped NoBody has ContentLength 0 but is
+		// not the sentinel, so Request.outgoingLength() reports -1 (unknown) and
+		// the retry would switch to Transfer-Encoding: chunked, differing from the
+		// first attempt's empty framing. http.NoBody's Close is already a no-op,
+		// so it needs no close-once wrapper.
+		var installed io.ReadCloser = rc
+		if rc != http.NoBody {
+			installed = &closeOnceBody{rc: rc}
+		}
+		req.Body = installed
+		req.GetBody = bodyReplay
+		req.ContentLength = replayContentLength
+		return installed, nil
+	}
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := buildRequest()
+		if err != nil {
+			return nil, err
+		}
+		req = req.WithContext(ctx)
+
+		// Capture the builder's body BEFORE the editors run so captureReplayBody
+		// can tell (on attempt 1) whether an editor replaced it — a replaced body
+		// is not safely reproducible for retries.
+		var builderBody io.ReadCloser
+		if attempt == 1 {
+			builderBody = req.Body
+		}
+
+		// On a retry, install the replay body BEFORE editors so body-aware editors
+		// sign the bytes that will actually be sent. We OWN this handle and close
+		// it after the editor phase — even if an editor replaces req.Body (which
+		// would otherwise orphan it). closeOnceBody makes the routine close below
+		// a no-op when the editor left it in place.
+		var preEditorBody io.ReadCloser
+		if attempt > 1 {
+			preEditorBody, err = installReplay(req)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		editErr := c.applyEditors(ctx, req, reqEditors)
+		if preEditorBody != nil {
+			_ = preEditorBody.Close()
+		}
+		if editErr != nil {
+			// Release whatever body the editors left (a replacement, or the
+			// already-closed pre-editor handle — closeOnceBody makes this safe).
+			if req.Body != nil {
+				_ = req.Body.Close()
+			}
+			return nil, editErr
+		}
+
+		if attempt == 1 {
+			// Snapshot the finalized first request's body exactly once; every
+			// later attempt replays THIS body.
+			replay, cl, retriable, capErr := captureReplayBody(req, builderBody, retryEligible)
+			if capErr != nil {
+				return nil, capErr
+			}
+			bodyReplay = replay
+			replayContentLength = cl
+			if !retriable {
+				// The body is not safely replayable (an unrewindable stream with
+				// no GetBody): send it once and do not retry.
+				maxAttempts = 1
+			}
+		} else {
+			// Re-install AFTER editors: the first finalized body wins, and any
+			// editor body change (now closed) is discarded and refreshed.
+			if _, err := installReplay(req); err != nil {
+				return nil, err
+			}
+		}
+
+		resp, err := c.Client.Do(req)
+		if err != nil {
+			lastErr = err
+			if c.Logger != nil {
+				c.Logger.Debug("request failed",
+					"operation", operationId,
+					"attempt", attempt,
+					"error", err,
+				)
+			}
+			// Network errors are retryable for idempotent operations
+			if isIdempotent && attempt < maxAttempts {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(delay + time.Duration(rand.Int63n(int64(100*time.Millisecond)))):
+				}
+				delay = time.Duration(float64(delay) * c.RetryConfig.Multiplier)
+				if delay > c.RetryConfig.MaxDelay {
+					delay = c.RetryConfig.MaxDelay
+				}
+				continue
+			}
+			return nil, err
+		}
+
+		// Success or non-retryable status
+		if !isRetryableStatus(resp.StatusCode, operationId) {
+			return resp, nil
+		}
+
+		lastResp = resp
+		if c.Logger != nil {
+			c.Logger.Debug("retryable status received",
+				"operation", operationId,
+				"attempt", attempt,
+				"status", resp.StatusCode,
+			)
+		}
+
+		// Don't retry if not idempotent or last attempt
+		if !isIdempotent || attempt >= maxAttempts {
+			return resp, nil
+		}
+
+		// Close body before retry
+		_ = resp.Body.Close()
+
+		// For 429 responses, respect Retry-After header if present
+		retryDelay := delay
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
+				if seconds, err := strconv.Atoi(retryAfter); err == nil && seconds > 0 {
+					retryDelay = time.Duration(seconds) * time.Second
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(retryDelay + time.Duration(rand.Int63n(int64(100*time.Millisecond)))):
+		}
+		delay = time.Duration(float64(delay) * c.RetryConfig.Multiplier)
+		if delay > c.RetryConfig.MaxDelay {
+			delay = c.RetryConfig.MaxDelay
+		}
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return lastResp, nil
+}
+
+// The interface specification for the client above.
+type ClientInterface interface {
+{{range . -}}
+{{$hasParams := .RequiresParamObject -}}
+{{$pathParams := .PathParams -}}
+{{$opid := .OperationId -}}
+    // {{$opid}}{{if .HasBody}}WithBody{{end}} request{{if .HasBody}} with any body{{end}}
+    {{$opid}}{{if .HasBody}}WithBody{{end}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}{{if .HasBody}}, contentType string, body io.Reader{{end}}, reqEditors... RequestEditorFn) (*http.Response, error)
+{{range .Bodies}}
+    {{if .IsSupportedByClient -}}
+    {{$opid}}{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error)
+    {{end -}}
+{{end}}{{/* range .Bodies */}}
+{{end}}{{/* range . $opid := .OperationId */}}
+}
+
+
+{{/* Generate client methods with retry support based on x-basecamp-idempotent */}}
+{{range . -}}
+{{$hasParams := .RequiresParamObject -}}
+{{$pathParams := .PathParams -}}
+{{$opid := .OperationId -}}
+{{/* Check for x-basecamp-idempotent extension or GET/HEAD methods (always safe to retry) */}}
+{{$isIdempotent := false -}}
+{{if or (eq .Method "GET") (eq .Method "HEAD") -}}
+{{$isIdempotent = true -}}
+{{else if .Spec -}}
+{{if .Spec.Extensions -}}
+{{if index .Spec.Extensions "x-basecamp-idempotent" -}}
+{{$isIdempotent = true -}}
+{{end -}}
+{{end -}}
+{{end -}}
+
+{{if $isIdempotent}}
+// {{$opid}}{{if .HasBody}}WithBody{{end}} is marked as idempotent and will be retried on transient failures.
+{{else}}
+// {{$opid}}{{if .HasBody}}WithBody{{end}} executes the {{$opid}} operation.
+{{end}}
+func (c *{{ $clientTypeName }}) {{$opid}}{{if .HasBody}}WithBody{{end}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}{{if .HasBody}}, contentType string, body io.Reader{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+{{if $isIdempotent}}
+    return c.doWithRetry(ctx, func() (*http.Request, error) {
+        return New{{$opid}}Request{{if .HasBody}}WithBody{{end}}(c.Server{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}{{if .HasBody}}, contentType, body{{end}})
+    }, true, "{{$opid}}", reqEditors...)
+{{else}}
+    req, err := New{{$opid}}Request{{if .HasBody}}WithBody{{end}}(c.Server{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}{{if .HasBody}}, contentType, body{{end}})
+    if err != nil {
+        return nil, err
+    }
+    req = req.WithContext(ctx)
+    if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+        return nil, err
+    }
+    return c.Client.Do(req)
+{{end}}
+}
+
+{{range .Bodies}}
+{{if .IsSupportedByClient -}}
+func (c *{{ $clientTypeName }}) {{$opid}}{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+{{if $isIdempotent}}
+    return c.doWithRetry(ctx, func() (*http.Request, error) {
+        return New{{$opid}}Request{{.Suffix}}(c.Server{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body)
+    }, true, "{{$opid}}", reqEditors...)
+{{else}}
+    req, err := New{{$opid}}Request{{.Suffix}}(c.Server{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body)
+    if err != nil {
+        return nil, err
+    }
+    req = req.WithContext(ctx)
+    if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+        return nil, err
+    }
+    return c.Client.Do(req)
+{{end}}
+}
+{{end -}}{{/* if .IsSupported */}}
+{{end}}{{/* range .Bodies */}}
+{{end}}
+
+{{/* Generate request builders */}}
+{{range .}}
+{{$hasParams := .RequiresParamObject -}}
+{{$pathParams := .PathParams -}}
+{{$bodyRequired := .BodyRequired -}}
+{{$opid := .OperationId -}}
+
+{{range .Bodies}}
+{{if .IsSupportedByClient -}}
+// New{{$opid}}Request{{.Suffix}} calls the generic {{$opid}} builder with {{.ContentType}} body
+func New{{$opid}}Request{{.Suffix}}(server string{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody) (*http.Request, error) {
+    var bodyReader io.Reader
+    {{if .IsJSON -}}
+        buf, err := json.Marshal(body)
+        if err != nil {
+            return nil, err
+        }
+        bodyReader = bytes.NewReader(buf)
+    {{else if eq .NameTag "Formdata" -}}
+        bodyStr, err := runtime.MarshalForm(body, nil)
+        if err != nil {
+            return nil, err
+        }
+        bodyReader = strings.NewReader(bodyStr.Encode())
+    {{else if eq .NameTag "Text" -}}
+        bodyReader = strings.NewReader(string(body))
+    {{end -}}
+    return New{{$opid}}RequestWithBody(server{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, "{{.ContentType}}", bodyReader)
+}
+{{end -}}
+{{end}}
+
+// New{{$opid}}Request{{if .HasBody}}WithBody{{end}} generates requests for {{$opid}}{{if .HasBody}} with any type of body{{end}}
+func New{{$opid}}Request{{if .HasBody}}WithBody{{end}}(server string{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}{{if .HasBody}}, contentType string, body io.Reader{{end}}) (*http.Request, error) {
+    var err error
+{{range $paramIdx, $param := .PathParams}}
+    var pathParam{{$paramIdx}} string
+    {{if .IsPassThrough}}
+    pathParam{{$paramIdx}} = {{.GoVariableName}}
+    {{end}}
+    {{if .IsJson}}
+    var pathParamBuf{{$paramIdx}} []byte
+    pathParamBuf{{$paramIdx}}, err = json.Marshal({{.GoVariableName}})
+    if err != nil {
+        return nil, err
+    }
+    pathParam{{$paramIdx}} = string(pathParamBuf{{$paramIdx}})
+    {{end}}
+    {{if .IsStyled}}
+    pathParam{{$paramIdx}}, err = runtime.StyleParamWithLocation("{{.Style}}", {{.Explode}}, "{{.ParamName}}", runtime.ParamLocationPath, {{.GoVariableName}})
+    if err != nil {
+        return nil, err
+    }
+    {{end}}
+{{end}}
+    serverURL, err := url.Parse(server)
+    if err != nil {
+        return nil, err
+    }
+
+    operationPath := fmt.Sprintf("{{genParamFmtString .Path}}"{{range $paramIdx, $param := .PathParams}}, pathParam{{$paramIdx}}{{end}})
+    if operationPath[0] == '/' {
+        operationPath = "." + operationPath
+    }
+
+    queryURL, err := serverURL.Parse(operationPath)
+    if err != nil {
+        return nil, err
+    }
+
+{{if .QueryParams}}
+    if params != nil {
+        queryValues := queryURL.Query()
+            {{range $paramIdx, $param := .QueryParams}}
+            {{if .HasOptionalPointer}} if params.{{.GoName}} != nil{{if .Schema.ArrayType}} && len(*params.{{.GoName}}) > 0{{end}} { {{end}}
+            {{if and (not .Required) (not .HasOptionalPointer)}}
+            {{if eq .Schema.GoType "string"}}if params.{{.GoName}} != "" {
+            {{else if or (eq .Schema.GoType "int") (eq .Schema.GoType "int32") (eq .Schema.GoType "int64") (eq .Schema.GoType "float32") (eq .Schema.GoType "float64")}}if params.{{.GoName}} != 0 {
+            {{else if eq .Schema.GoType "bool"}}if params.{{.GoName}} {
+            {{end}}
+            {{end}}
+            {{if .IsPassThrough}}
+            queryValues.Add("{{.ParamName}}", {{if .HasOptionalPointer}}*{{end}}params.{{.GoName}})
+            {{end}}
+            {{if .IsJson}}
+            if queryParamBuf, err := json.Marshal({{if .HasOptionalPointer}}*{{end}}params.{{.GoName}}); err != nil {
+                return nil, err
+            } else {
+                queryValues.Add("{{.ParamName}}", string(queryParamBuf))
+            }
+
+            {{end}}
+            {{if .IsStyled}}
+            if queryFrag, err := runtime.StyleParamWithLocation("{{.Style}}", {{.Explode}}, "{{.ParamName}}", runtime.ParamLocationQuery, {{if .HasOptionalPointer}}*{{end}}params.{{.GoName}}); err != nil {
+                return nil, err
+            } else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+               return nil, err
+            } else {
+               for k, v := range parsed {
+                   for _, v2 := range v {
+                       queryValues.Add(k, v2)
+                   }
+               }
+            }
+            {{end}}
+            {{if and (not .Required) (not .HasOptionalPointer)}}
+            {{if or (eq .Schema.GoType "string") (eq .Schema.GoType "int") (eq .Schema.GoType "int32") (eq .Schema.GoType "int64") (eq .Schema.GoType "float32") (eq .Schema.GoType "float64") (eq .Schema.GoType "bool")}} }
+            {{end}}
+            {{end}}
+            {{if .HasOptionalPointer}}}{{end}}
+        {{end}}
+        queryURL.RawQuery = queryValues.Encode()
+    }
+{{end}}{{/* if .QueryParams */}}
+    req, err := http.NewRequest("{{.Method}}", queryURL.String(), {{if .HasBody}}body{{else}}nil{{end}})
+    if err != nil {
+        return nil, err
+    }
+
+    {{if .HasBody}}req.Header.Add("Content-Type", contentType){{end}}
+{{ if .HeaderParams }}
+    if params != nil {
+    {{range $paramIdx, $param := .HeaderParams}}
+        {{if .HasOptionalPointer}} if params.{{.GoName}} != nil { {{end}}
+        {{if and (not .Required) (not .HasOptionalPointer)}}
+        {{if eq .Schema.GoType "string"}}if params.{{.GoName}} != "" {
+        {{else if or (eq .Schema.GoType "int") (eq .Schema.GoType "int32") (eq .Schema.GoType "int64") (eq .Schema.GoType "float32") (eq .Schema.GoType "float64")}}if params.{{.GoName}} != 0 {
+        {{else if eq .Schema.GoType "bool"}}if params.{{.GoName}} {
+        {{end}}
+        {{end}}
+        var headerParam{{$paramIdx}} string
+        {{if .IsPassThrough}}
+        headerParam{{$paramIdx}} = {{if .HasOptionalPointer}}*{{end}}params.{{.GoName}}
+        {{end}}
+        {{if .IsJson}}
+        var headerParamBuf{{$paramIdx}} []byte
+        headerParamBuf{{$paramIdx}}, err = json.Marshal({{if .HasOptionalPointer}}*{{end}}params.{{.GoName}})
+        if err != nil {
+            return nil, err
+        }
+        headerParam{{$paramIdx}} = string(headerParamBuf{{$paramIdx}})
+        {{end}}
+        {{if .IsStyled}}
+        headerParam{{$paramIdx}}, err = runtime.StyleParamWithLocation("{{.Style}}", {{.Explode}}, "{{.ParamName}}", runtime.ParamLocationHeader, {{if .HasOptionalPointer}}*{{end}}params.{{.GoName}})
+        if err != nil {
+            return nil, err
+        }
+        {{end}}
+        req.Header.Set("{{.ParamName}}", headerParam{{$paramIdx}})
+        {{if and (not .Required) (not .HasOptionalPointer)}}
+        {{if or (eq .Schema.GoType "string") (eq .Schema.GoType "int") (eq .Schema.GoType "int32") (eq .Schema.GoType "int64") (eq .Schema.GoType "float32") (eq .Schema.GoType "float64") (eq .Schema.GoType "bool")}} }
+        {{end}}
+        {{end}}
+        {{if .HasOptionalPointer}}}{{end}}
+    {{end}}
+    }
+{{- end }}{{/* if .HeaderParams */}}
+
+{{ if .CookieParams }}
+    if params != nil {
+    {{range $paramIdx, $param := .CookieParams}}
+        {{if .HasOptionalPointer}} if params.{{.GoName}} != nil { {{end}}
+        {{if and (not .Required) (not .HasOptionalPointer)}}
+        {{if eq .Schema.GoType "string"}}if params.{{.GoName}} != "" {
+        {{else if or (eq .Schema.GoType "int") (eq .Schema.GoType "int32") (eq .Schema.GoType "int64") (eq .Schema.GoType "float32") (eq .Schema.GoType "float64")}}if params.{{.GoName}} != 0 {
+        {{else if eq .Schema.GoType "bool"}}if params.{{.GoName}} {
+        {{end}}
+        {{end}}
+        var cookieParam{{$paramIdx}} string
+        {{if .IsPassThrough}}
+        cookieParam{{$paramIdx}} = {{if .HasOptionalPointer}}*{{end}}params.{{.GoName}}
+        {{end}}
+        {{if .IsJson}}
+        var cookieParamBuf{{$paramIdx}} []byte
+        cookieParamBuf{{$paramIdx}}, err = json.Marshal({{if .HasOptionalPointer}}*{{end}}params.{{.GoName}})
+        if err != nil {
+            return nil, err
+        }
+        cookieParam{{$paramIdx}} = url.QueryEscape(string(cookieParamBuf{{$paramIdx}}))
+        {{end}}
+        {{if .IsStyled}}
+        cookieParam{{$paramIdx}}, err = runtime.StyleParamWithLocation("simple", {{.Explode}}, "{{.ParamName}}", runtime.ParamLocationCookie, {{if .HasOptionalPointer}}*{{end}}params.{{.GoName}})
+        if err != nil {
+            return nil, err
+        }
+        {{end}}
+        cookie{{$paramIdx}} := &http.Cookie{
+            Name:"{{.ParamName}}",
+            Value:cookieParam{{$paramIdx}},
+        }
+        req.AddCookie(cookie{{$paramIdx}})
+        {{if and (not .Required) (not .HasOptionalPointer)}}
+        {{if or (eq .Schema.GoType "string") (eq .Schema.GoType "int") (eq .Schema.GoType "int32") (eq .Schema.GoType "int64") (eq .Schema.GoType "float32") (eq .Schema.GoType "float64") (eq .Schema.GoType "bool")}} }
+        {{end}}
+        {{end}}
+        {{if .HasOptionalPointer}}}{{end}}
+    {{ end -}}
+    }
+{{- end }}{{/* if .CookieParams */}}
+    return req, nil
+}
+
+{{end}}{{/* Range */}}
+
+func (c *{{ $clientTypeName }}) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
+    for _, r := range c.RequestEditors {
+        if err := r(ctx, req); err != nil {
+            return err
+        }
+    }
+    for _, r := range additionalEditors {
+        if err := r(ctx, req); err != nil {
+            return err
+        }
+    }
+    return nil
+}
+
+// OperationMetadata contains metadata about an API operation derived from OpenAPI extensions.
+type OperationMetadata struct {
+	// Idempotent indicates whether the operation can be safely retried.
+	Idempotent bool
+	// HasSensitiveParams indicates whether any parameters contain sensitive data.
+	HasSensitiveParams bool
+}
+
+// operationMetadata maps operation IDs to their metadata.
+// This is generated from x-basecamp-* extensions in the OpenAPI spec.
+// GET/HEAD operations are always considered idempotent for retry purposes.
+var operationMetadata = map[string]OperationMetadata{
+{{range . -}}
+{{$opid := .OperationId -}}
+{{$isIdempotent := false -}}
+{{$hasSensitive := false -}}
+{{if or (eq .Method "GET") (eq .Method "HEAD") -}}
+{{$isIdempotent = true -}}
+{{else if .Spec -}}
+{{if .Spec.Extensions -}}
+{{if index .Spec.Extensions "x-basecamp-idempotent" -}}
+{{$isIdempotent = true -}}
+{{end -}}
+{{end -}}
+{{end -}}
+{{if .Spec -}}
+{{if .Spec.Extensions -}}
+{{if index .Spec.Extensions "x-basecamp-sensitive" -}}
+{{$hasSensitive = true -}}
+{{end -}}
+{{end -}}
+{{end -}}
+	"{{$opid}}": {Idempotent: {{$isIdempotent}}, HasSensitiveParams: {{$hasSensitive}}},
+{{end}}
+}
+
+// operationRetryMax maps operation IDs to their per-operation maximum TOTAL
+// attempt count from the x-basecamp-retry extension. doWithRetry applies it as a
+// per-operation ceiling: effective attempts = min(client cap, retry max). It is
+// kept as a separate map (rather than a field on OperationMetadata) so wiring it
+// up does not change that exported struct's shape, which would break external
+// unkeyed composite literals.
+var operationRetryMax = map[string]int{
+{{range . -}}
+{{$opid := .OperationId -}}
+{{$retryMax := 0 -}}
+{{if .Spec -}}
+{{if .Spec.Extensions -}}
+{{$retry := index .Spec.Extensions "x-basecamp-retry" -}}
+{{if $retry -}}
+{{$retryMax = index $retry "maxAttempts" -}}
+{{end -}}
+{{end -}}
+{{end -}}
+	"{{$opid}}": {{$retryMax}},
+{{end}}
+}
+
+// operationRetryOn maps operation IDs to their declared retryable status set
+// from the x-basecamp-retry extension. Like operationRetryMax it is a separate
+// map rather than a field on OperationMetadata, so wiring it up does not change
+// that exported struct's shape.
+var operationRetryOn = map[string][]int{
+{{range . -}}
+{{$opid := .OperationId -}}
+{{$retryOn := "" -}}
+{{if .Spec -}}
+{{if .Spec.Extensions -}}
+{{$retry := index .Spec.Extensions "x-basecamp-retry" -}}
+{{if $retry -}}
+{{if index $retry "retryOn" -}}
+{{range $i, $status := index $retry "retryOn" -}}
+{{if $i}}{{$retryOn = printf "%s, %v" $retryOn $status}}{{else}}{{$retryOn = printf "%v" $status}}{{end -}}
+{{end -}}
+{{end -}}
+{{end -}}
+{{end -}}
+{{end -}}
+	"{{$opid}}": { {{$retryOn}} },
+{{end}}
+}
+
+// GetOperationRetryOn returns a COPY of the declared retryable status set for
+// the given operation ID. The copy matters: isRetryableStatus reads the same
+// package-level table on every response, so handing out the stored slice would
+// let any caller rewrite the retry policy for every client in the process, and
+// race with in-flight requests while doing it.
+//
+// ok is false when the operation carries no per-op set. A present-but-empty set
+// returns ok true, which is how "declared empty" stays distinguishable from
+// "absent" — ok, not nilness, is the signal.
+func GetOperationRetryOn(operationId string) ([]int, bool) {
+	r, ok := operationRetryOn[operationId]
+	if !ok {
+		return nil, false
+	}
+	return append([]int(nil), r...), true
+}
+
+// GetOperationRetryMax returns the per-operation retry ceiling (maximum total
+// attempts) for the given operation ID. ok is false when the operation carries
+// no per-op override, in which case the client-configured cap applies unchanged.
+func GetOperationRetryMax(operationId string) (int, bool) {
+	m, ok := operationRetryMax[operationId]
+	return m, ok
+}
+
+// GetOperationMetadata returns metadata for the given operation ID.
+func GetOperationMetadata(operationId string) (OperationMetadata, bool) {
+	meta, ok := operationMetadata[operationId]
+	return meta, ok
+}
+
+// IsIdempotent returns whether the given operation is idempotent and safe to retry.
+func IsIdempotent(operationId string) bool {
+	if meta, ok := operationMetadata[operationId]; ok {
+		return meta.Idempotent
+	}
+	return false
+}
+
+// =============================================================================
+// Auth Transport
+// =============================================================================
+
+// TokenProvider is the interface for obtaining access tokens.
+type TokenProvider interface {
+	// AccessToken returns a valid access token, refreshing if needed.
+	AccessToken(ctx context.Context) (string, error)
+}
+
+// StaticTokenProvider provides a fixed token (e.g., from environment variable).
+type StaticTokenProvider struct {
+	Token string
+}
+
+// AccessToken returns the static token.
+func (p *StaticTokenProvider) AccessToken(ctx context.Context) (string, error) {
+	if p.Token == "" {
+		return "", &APIError{Code: ErrCodeAuth, Message: "no token configured"}
+	}
+	return p.Token, nil
+}
+
+// AuthTransport is an http.RoundTripper that adds Bearer token authentication.
+type AuthTransport struct {
+	// TokenProvider supplies access tokens for requests.
+	TokenProvider TokenProvider
+	// Base is the underlying transport. If nil, http.DefaultTransport is used.
+	Base http.RoundTripper
+	// UserAgent is the User-Agent header value. If empty, a default is used.
+	UserAgent string
+}
+
+// RoundTrip implements http.RoundTripper, adding the Authorization header.
+func (t *AuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Get access token
+	token, err := t.TokenProvider.AccessToken(req.Context())
+	if err != nil {
+		return nil, err
+	}
+
+	// Clone request to avoid mutating the original
+	req2 := req.Clone(req.Context())
+	req2.Header.Set("Authorization", "Bearer "+token)
+
+	if t.UserAgent != "" {
+		req2.Header.Set("User-Agent", t.UserAgent)
+	}
+
+	// Set default headers if not present
+	if req2.Header.Get("Content-Type") == "" && req2.Body != nil {
+		req2.Header.Set("Content-Type", "application/json")
+	}
+	if req2.Header.Get("Accept") == "" {
+		req2.Header.Set("Accept", "application/json")
+	}
+
+	base := t.Base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req2)
+}
+
+// WithAuthTransport returns a ClientOption that configures authentication.
+func WithAuthTransport(tokenProvider TokenProvider, userAgent string) ClientOption {
+	return func(c *{{ $clientTypeName }}) error {
+		// Wrap the existing client's transport
+		existingTransport := http.DefaultTransport
+		if c.Client != nil {
+			if httpClient, ok := c.Client.(*http.Client); ok && httpClient.Transport != nil {
+				existingTransport = httpClient.Transport
+			}
+		}
+
+		authTransport := &AuthTransport{
+			TokenProvider: tokenProvider,
+			Base:          existingTransport,
+			UserAgent:     userAgent,
+		}
+
+		c.Client = &http.Client{Transport: authTransport}
+		return nil
+	}
+}
+
+// =============================================================================
+// Caching Transport
+// =============================================================================
+
+// ResponseCache is the interface for caching HTTP responses.
+type ResponseCache interface {
+	// Get returns the cached ETag and body for a URL, or empty values if not cached.
+	Get(url string) (etag string, body []byte, ok bool)
+	// Set stores the ETag and body for a URL.
+	Set(url string, etag string, body []byte)
+	// Invalidate removes a cached entry.
+	Invalidate(url string)
+	// Clear removes all cached entries.
+	Clear()
+}
+
+// InMemoryCache is a simple in-memory cache implementation.
+type InMemoryCache struct {
+	mu      sync.RWMutex
+	entries map[string]*cacheEntry
+}
+
+type cacheEntry struct {
+	etag string
+	body []byte
+}
+
+// NewInMemoryCache creates a new in-memory cache.
+func NewInMemoryCache() *InMemoryCache {
+	return &InMemoryCache{
+		entries: make(map[string]*cacheEntry),
+	}
+}
+
+// Get returns the cached ETag and body for a URL.
+func (c *InMemoryCache) Get(url string) (etag string, body []byte, ok bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if entry, exists := c.entries[url]; exists {
+		return entry.etag, entry.body, true
+	}
+	return "", nil, false
+}
+
+// Set stores the ETag and body for a URL.
+func (c *InMemoryCache) Set(url string, etag string, body []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[url] = &cacheEntry{etag: etag, body: body}
+}
+
+// Invalidate removes a cached entry.
+func (c *InMemoryCache) Invalidate(url string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, url)
+}
+
+// Clear removes all cached entries.
+func (c *InMemoryCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = make(map[string]*cacheEntry)
+}
+
+// CachingTransport is an http.RoundTripper that implements ETag-based caching.
+type CachingTransport struct {
+	// Cache stores responses by URL.
+	Cache ResponseCache
+	// Base is the underlying transport. If nil, http.DefaultTransport is used.
+	Base http.RoundTripper
+}
+
+// RoundTrip implements http.RoundTripper with ETag-based caching.
+func (t *CachingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.Base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+
+	// Only cache GET requests
+	if req.Method != http.MethodGet {
+		// Invalidate cache for mutating requests to the same URL
+		if req.Method == http.MethodPost || req.Method == http.MethodPut ||
+			req.Method == http.MethodPatch || req.Method == http.MethodDelete {
+			t.Cache.Invalidate(req.URL.String())
+		}
+		return base.RoundTrip(req)
+	}
+
+	url := req.URL.String()
+
+	// Check cache for ETag
+	etag, cachedBody, hasCached := t.Cache.Get(url)
+	if hasCached && etag != "" {
+		// Clone request and add If-None-Match header
+		req2 := req.Clone(req.Context())
+		req2.Header.Set("If-None-Match", etag)
+		req = req2
+	}
+
+	resp, err := base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle 304 Not Modified - return cached response
+	if resp.StatusCode == http.StatusNotModified && hasCached {
+		_ = resp.Body.Close()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Status:     "200 OK (cached)",
+			Header:     resp.Header,
+			Body:       io.NopCloser(bytes.NewReader(cachedBody)),
+			Request:    req,
+		}, nil
+	}
+
+	// Cache successful GET responses with ETag
+	if resp.StatusCode == http.StatusOK {
+		if newETag := resp.Header.Get("ETag"); newETag != "" {
+			// Read and cache the body
+			body, err := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if err != nil {
+				return nil, err
+			}
+			t.Cache.Set(url, newETag, body)
+			// Return response with new body reader
+			resp.Body = io.NopCloser(bytes.NewReader(body))
+		}
+	}
+
+	return resp, nil
+}
+
+// WithCachingTransport returns a ClientOption that enables ETag-based caching.
+func WithCachingTransport(cache ResponseCache) ClientOption {
+	return func(c *{{ $clientTypeName }}) error {
+		// Wrap the existing client's transport
+		existingTransport := http.DefaultTransport
+		if c.Client != nil {
+			if httpClient, ok := c.Client.(*http.Client); ok && httpClient.Transport != nil {
+				existingTransport = httpClient.Transport
+			}
+		}
+
+		cachingTransport := &CachingTransport{
+			Cache: cache,
+			Base:  existingTransport,
+		}
+
+		c.Client = &http.Client{Transport: cachingTransport}
+		return nil
+	}
+}
+
+// =============================================================================
+// Structured Error Types
+// =============================================================================
+
+// Error codes for API responses.
+const (
+	ErrCodeUsage     = "usage"
+	ErrCodeNotFound  = "not_found"
+	ErrCodeAuth      = "auth_required"
+	ErrCodeForbidden = "forbidden"
+	ErrCodeRateLimit = "rate_limit"
+	ErrCodeNetwork   = "network"
+	ErrCodeAPI       = "api_error"
+	ErrCodeAmbiguous = "ambiguous"
+)
+
+// APIError is a structured error with code, message, and optional hint.
+type APIError struct {
+	// Code is a machine-readable error code.
+	Code string
+	// Message is a human-readable error message.
+	Message string
+	// Hint provides additional context or suggestions for resolution.
+	Hint string
+	// HTTPStatus is the HTTP status code that triggered this error.
+	HTTPStatus int
+	// Retryable indicates whether the operation can be retried.
+	Retryable bool
+	// Cause is the underlying error, if any.
+	Cause error
+}
+
+// Error implements the error interface.
+func (e *APIError) Error() string {
+	if e.Hint != "" {
+		return fmt.Sprintf("%s: %s", e.Message, e.Hint)
+	}
+	return e.Message
+}
+
+// Unwrap returns the underlying cause for errors.Is/As support.
+func (e *APIError) Unwrap() error {
+	return e.Cause
+}
+
+// IsRetryable returns whether this error indicates a retryable condition.
+func (e *APIError) IsRetryable() bool {
+	return e.Retryable
+}
+
+// NewUsageError creates a usage error.
+func NewUsageError(msg string) *APIError {
+	return &APIError{Code: ErrCodeUsage, Message: msg}
+}
+
+// NewUsageErrorWithHint creates a usage error with a hint.
+func NewUsageErrorWithHint(msg, hint string) *APIError {
+	return &APIError{Code: ErrCodeUsage, Message: msg, Hint: hint}
+}
+
+// NewNotFoundError creates a not-found error.
+func NewNotFoundError(resource, identifier string) *APIError {
+	return &APIError{
+		Code:       ErrCodeNotFound,
+		Message:    fmt.Sprintf("%s not found: %s", resource, identifier),
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+// NewNotFoundErrorWithHint creates a not-found error with a hint.
+func NewNotFoundErrorWithHint(resource, identifier, hint string) *APIError {
+	return &APIError{
+		Code:       ErrCodeNotFound,
+		Message:    fmt.Sprintf("%s not found: %s", resource, identifier),
+		Hint:       hint,
+		HTTPStatus: http.StatusNotFound,
+	}
+}
+
+// NewAuthError creates an authentication error.
+func NewAuthError(msg string) *APIError {
+	return &APIError{
+		Code:       ErrCodeAuth,
+		Message:    msg,
+		HTTPStatus: http.StatusUnauthorized,
+	}
+}
+
+// NewForbiddenError creates a forbidden error.
+func NewForbiddenError(msg string) *APIError {
+	return &APIError{
+		Code:       ErrCodeForbidden,
+		Message:    msg,
+		HTTPStatus: http.StatusForbidden,
+	}
+}
+
+// NewForbiddenScopeError creates a forbidden error due to insufficient scope.
+func NewForbiddenScopeError() *APIError {
+	return &APIError{
+		Code:       ErrCodeForbidden,
+		Message:    "Access denied: insufficient scope",
+		Hint:       "Re-authenticate with full scope",
+		HTTPStatus: http.StatusForbidden,
+	}
+}
+
+// NewRateLimitError creates a rate-limit error.
+func NewRateLimitError(retryAfter int) *APIError {
+	hint := "Try again later"
+	if retryAfter > 0 {
+		hint = fmt.Sprintf("Try again in %d seconds", retryAfter)
+	}
+	return &APIError{
+		Code:       ErrCodeRateLimit,
+		Message:    "Rate limited",
+		Hint:       hint,
+		HTTPStatus: http.StatusTooManyRequests,
+		Retryable:  true,
+	}
+}
+
+// NewNetworkError creates a network error.
+func NewNetworkError(cause error) *APIError {
+	return &APIError{
+		Code:      ErrCodeNetwork,
+		Message:   "Network error",
+		Hint:      cause.Error(),
+		Retryable: true,
+		Cause:     cause,
+	}
+}
+
+// NewAPIError creates an API error with an HTTP status code.
+func NewAPIError(status int, msg string) *APIError {
+	return &APIError{
+		Code:       ErrCodeAPI,
+		Message:    msg,
+		HTTPStatus: status,
+	}
+}
+
+// NewAmbiguousError creates an ambiguous match error.
+func NewAmbiguousError(resource string, matches []string) *APIError {
+	hint := "Be more specific"
+	if len(matches) > 0 && len(matches) <= 5 {
+		hint = fmt.Sprintf("Did you mean: %v", matches)
+	}
+	return &APIError{
+		Code:    ErrCodeAmbiguous,
+		Message: fmt.Sprintf("Ambiguous %s", resource),
+		Hint:    hint,
+	}
+}
+
+// AsAPIError attempts to convert an error to an *APIError.
+// If the error is not an *APIError, it wraps it in one.
+func AsAPIError(err error) *APIError {
+	if err == nil {
+		return nil
+	}
+	if apiErr, ok := errors.AsType[*APIError](err); ok {
+		return apiErr
+	}
+	return &APIError{
+		Code:    ErrCodeAPI,
+		Message: err.Error(),
+		Cause:   err,
+	}
+}
+
+// ParseHTTPError converts an HTTP response to an appropriate APIError.
+func ParseHTTPError(resp *http.Response) *APIError {
+	// Success cases - no error
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	// Error cases
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		return NewAuthError("Authentication required")
+	case http.StatusForbidden:
+		return NewForbiddenError("Access denied")
+	case http.StatusNotFound:
+		return NewNotFoundError("Resource", resp.Request.URL.Path)
+	case http.StatusTooManyRequests:
+		retryAfter := 0
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			retryAfter, _ = strconv.Atoi(ra)
+		}
+		return NewRateLimitError(retryAfter)
+	case http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return &APIError{
+			Code:       ErrCodeAPI,
+			Message:    fmt.Sprintf("Server error (%d)", resp.StatusCode),
+			HTTPStatus: resp.StatusCode,
+			Retryable:  true,
+		}
+	default:
+		return NewAPIError(resp.StatusCode, fmt.Sprintf("Request failed (%d)", resp.StatusCode))
+	}
+}
+
+// =============================================================================
+// Service Accessor Pattern
+// =============================================================================
+//
+// Service types group related operations for better discoverability.
+// Example: client.Todos().List(...) instead of client.ListTodos(...)
+
+// TodosService provides todo-related operations.
+type TodosService struct { client *{{ $clientTypeName }} }
+
+// Todos returns the TodosService.
+func (c *{{ $clientTypeName }}) Todos() *TodosService { return &TodosService{client: c} }
+
+// ProjectsService provides project-related operations.
+type ProjectsService struct { client *{{ $clientTypeName }} }
+
+// Projects returns the ProjectsService.
+func (c *{{ $clientTypeName }}) Projects() *ProjectsService { return &ProjectsService{client: c} }
+
+// CommentsService provides comment-related operations.
+type CommentsService struct { client *{{ $clientTypeName }} }
+
+// Comments returns the CommentsService.
+func (c *{{ $clientTypeName }}) Comments() *CommentsService { return &CommentsService{client: c} }
+
+// MessagesService provides message-related operations.
+type MessagesService struct { client *{{ $clientTypeName }} }
+
+// Messages returns the MessagesService.
+func (c *{{ $clientTypeName }}) Messages() *MessagesService { return &MessagesService{client: c} }
+
+// PeopleService provides people-related operations.
+type PeopleService struct { client *{{ $clientTypeName }} }
+
+// People returns the PeopleService.
+func (c *{{ $clientTypeName }}) People() *PeopleService { return &PeopleService{client: c} }
+
+// CardsService provides card-related operations.
+type CardsService struct { client *{{ $clientTypeName }} }
+
+// Cards returns the CardsService.
+func (c *{{ $clientTypeName }}) Cards() *CardsService { return &CardsService{client: c} }
+
+// RecordingsService provides recording-related operations.
+type RecordingsService struct { client *{{ $clientTypeName }} }
+
+// Recordings returns the RecordingsService.
+func (c *{{ $clientTypeName }}) Recordings() *RecordingsService { return &RecordingsService{client: c} }
+
+// WebhooksService provides webhook-related operations.
+type WebhooksService struct { client *{{ $clientTypeName }} }
+
+// Webhooks returns the WebhooksService.
+func (c *{{ $clientTypeName }}) Webhooks() *WebhooksService { return &WebhooksService{client: c} }
+
+// DocumentsService provides document-related operations.
+type DocumentsService struct { client *{{ $clientTypeName }} }
+
+// Documents returns the DocumentsService.
+func (c *{{ $clientTypeName }}) Documents() *DocumentsService { return &DocumentsService{client: c} }
+
+// UploadsService provides upload-related operations.
+type UploadsService struct { client *{{ $clientTypeName }} }
+
+// Uploads returns the UploadsService.
+func (c *{{ $clientTypeName }}) Uploads() *UploadsService { return &UploadsService{client: c} }
+
+// SchedulesService provides schedule-related operations.
+type SchedulesService struct { client *{{ $clientTypeName }} }
+
+// Schedules returns the SchedulesService.
+func (c *{{ $clientTypeName }}) Schedules() *SchedulesService { return &SchedulesService{client: c} }
+
+// VaultsService provides vault-related operations.
+type VaultsService struct { client *{{ $clientTypeName }} }
+
+// Vaults returns the VaultsService.
+func (c *{{ $clientTypeName }}) Vaults() *VaultsService { return &VaultsService{client: c} }
+
+// TemplatesService provides template-related operations.
+type TemplatesService struct { client *{{ $clientTypeName }} }
+
+// Templates returns the TemplatesService.
+func (c *{{ $clientTypeName }}) Templates() *TemplatesService { return &TemplatesService{client: c} }
+
+// EventsService provides event-related operations.
+type EventsService struct { client *{{ $clientTypeName }} }
+
+// Events returns the EventsService.
+func (c *{{ $clientTypeName }}) Events() *EventsService { return &EventsService{client: c} }
+
+// CampfiresService provides campfire-related operations.
+type CampfiresService struct { client *{{ $clientTypeName }} }
+
+// Campfires returns the CampfiresService.
+func (c *{{ $clientTypeName }}) Campfires() *CampfiresService { return &CampfiresService{client: c} }
+
+// Generate service methods by delegating to client methods
+{{range . -}}
+{{$hasParams := .RequiresParamObject -}}
+{{$pathParams := .PathParams -}}
+{{$opid := .OperationId -}}
+
+{{/* Todos operations */}}
+{{if eq $opid "ListTodos"}}
+func (s *TodosService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetTodo"}}
+func (s *TodosService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateTodo"}}
+func (s *TodosService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *TodosService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "ReplaceTodo"}}
+func (s *TodosService) ReplaceWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *TodosService) Replace{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "CompleteTodo"}}
+func (s *TodosService) Complete(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "UncompleteTodo"}}
+func (s *TodosService) Uncomplete(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+
+{{/* Projects operations */}}
+{{else if eq $opid "ListProjects"}}
+func (s *ProjectsService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetProject"}}
+func (s *ProjectsService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateProject"}}
+func (s *ProjectsService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *ProjectsService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "UpdateProject"}}
+func (s *ProjectsService) UpdateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *ProjectsService) Update{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "TrashProject"}}
+func (s *ProjectsService) Trash(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "ArchiveProject"}}
+func (s *ProjectsService) Archive(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "UnarchiveProject"}}
+func (s *ProjectsService) Unarchive(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+
+{{/* Comments operations */}}
+{{else if eq $opid "ListComments"}}
+func (s *CommentsService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetComment"}}
+func (s *CommentsService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateComment"}}
+func (s *CommentsService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *CommentsService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "UpdateComment"}}
+func (s *CommentsService) UpdateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *CommentsService) Update{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+
+{{/* Messages operations */}}
+{{else if eq $opid "ListMessages"}}
+func (s *MessagesService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetMessage"}}
+func (s *MessagesService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateMessage"}}
+func (s *MessagesService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *MessagesService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "UpdateMessage"}}
+func (s *MessagesService) UpdateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *MessagesService) Update{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+
+{{/* People operations */}}
+{{else if eq $opid "ListPeople"}}
+func (s *PeopleService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetPerson"}}
+func (s *PeopleService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetMyProfile"}}
+func (s *PeopleService) GetMyProfile(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+
+{{/* Cards operations */}}
+{{else if eq $opid "ListCards"}}
+func (s *CardsService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetCard"}}
+func (s *CardsService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateCard"}}
+func (s *CardsService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *CardsService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "UpdateCard"}}
+{{/* The plain Update name belongs to the composite in pkg/basecamp/cards.go.
+     BC3's kanban/cards_controller.rb used to build card_update_params as
+     `{ due_on: nil }.merge(card_params)`, so a sparse verbatim PUT silently
+     erased the due date (#467) and the composite existed to defend against it.
+     basecamp/bc3#12521 made the JSON representation presence-aware, so an
+     omitted key is now left unchanged and the two paths behave identically;
+     collapsing them is tracked separately. */}}
+func (s *CardsService) UpdateVerbatimWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *CardsService) UpdateVerbatim{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "MoveCard"}}
+func (s *CardsService) MoveWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *CardsService) Move{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+
+{{/* Recordings operations */}}
+{{else if eq $opid "ListRecordings"}}
+func (s *RecordingsService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "TrashRecording"}}
+func (s *RecordingsService) Trash(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "ArchiveRecording"}}
+func (s *RecordingsService) Archive(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "UnarchiveRecording"}}
+func (s *RecordingsService) Unarchive(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+
+{{/* Webhooks operations */}}
+{{else if eq $opid "ListWebhooks"}}
+func (s *WebhooksService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetWebhook"}}
+func (s *WebhooksService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateWebhook"}}
+func (s *WebhooksService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *WebhooksService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "UpdateWebhook"}}
+func (s *WebhooksService) UpdateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *WebhooksService) Update{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "DeleteWebhook"}}
+func (s *WebhooksService) Delete(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+
+{{/* Documents operations */}}
+{{else if eq $opid "ListDocuments"}}
+func (s *DocumentsService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetDocument"}}
+func (s *DocumentsService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateDocument"}}
+func (s *DocumentsService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *DocumentsService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "ReplaceDocument"}}
+func (s *DocumentsService) ReplaceWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *DocumentsService) Replace{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+
+{{/* Uploads operations */}}
+{{else if eq $opid "ListUploads"}}
+func (s *UploadsService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetUpload"}}
+func (s *UploadsService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateUpload"}}
+func (s *UploadsService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *UploadsService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "UpdateUpload"}}
+func (s *UploadsService) UpdateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *UploadsService) Update{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+
+{{/* Vaults operations */}}
+{{else if eq $opid "ListVaults"}}
+func (s *VaultsService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetVault"}}
+func (s *VaultsService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateVault"}}
+func (s *VaultsService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *VaultsService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "UpdateVault"}}
+func (s *VaultsService) UpdateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *VaultsService) Update{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+
+{{/* Templates operations */}}
+{{else if eq $opid "ListTemplates"}}
+func (s *TemplatesService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetTemplate"}}
+func (s *TemplatesService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateTemplate"}}
+func (s *TemplatesService) CreateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *TemplatesService) Create{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "UpdateTemplate"}}
+func (s *TemplatesService) UpdateWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *TemplatesService) Update{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "DeleteTemplate"}}
+func (s *TemplatesService) Delete(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+
+{{/* Events operations */}}
+{{else if eq $opid "ListEvents"}}
+func (s *EventsService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+
+{{/* Campfires operations */}}
+{{else if eq $opid "ListCampfires"}}
+func (s *CampfiresService) List(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetCampfire"}}
+func (s *CampfiresService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+
+{{/* Schedules operations */}}
+{{else if eq $opid "GetSchedule"}}
+func (s *SchedulesService) Get(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "ListScheduleEntries"}}
+func (s *SchedulesService) ListEntries(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "GetScheduleEntry"}}
+func (s *SchedulesService) GetEntry(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, reqEditors...)
+}
+{{else if eq $opid "CreateScheduleEntry"}}
+func (s *SchedulesService) CreateEntryWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *SchedulesService) CreateEntry{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+{{else if eq $opid "ReplaceScheduleEntry"}}
+func (s *SchedulesService) ReplaceEntryWithBody(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, contentType string, body io.Reader, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}WithBody(ctx{{genParamNames .PathParams}}{{if $hasParams}}, params{{end}}, contentType, body, reqEditors...)
+}
+{{range .Bodies}}{{if .IsSupportedByClient}}
+func (s *SchedulesService) ReplaceEntry{{.Suffix}}(ctx context.Context{{genParamArgs $pathParams}}{{if $hasParams}}, params *{{$opid}}Params{{end}}, body {{$opid}}{{.NameTag}}RequestBody, reqEditors... RequestEditorFn) (*http.Response, error) {
+	return s.client.{{$opid}}{{.Suffix}}(ctx{{genParamNames $pathParams}}{{if $hasParams}}, params{{end}}, body, reqEditors...)
+}
+{{end}}{{end}}
+
+{{end}}{{/* end of operation matching */}}
+{{end}}{{/* range operations */}}

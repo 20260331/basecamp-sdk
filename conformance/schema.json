@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://basecamp.com/schemas/sdk-conformance-test.json",
+  "title": "SDK Conformance Test",
+  "description": "Schema for cross-language SDK conformance tests",
+  "type": "object",
+  "required": ["name", "operation"],
+  "allOf": [
+    {
+      "if": { "anyOf": [
+        { "not": { "required": ["mode"] } },
+        { "properties": { "mode": { "const": "mock" } } }
+      ] },
+      "then": { "required": ["mockResponses", "assertions"] }
+    },
+    {
+      "if": { "properties": { "mode": { "const": "live" } }, "required": ["mode"] },
+      "then": {
+        "not": { "required": ["mockResponses"] },
+        "required": ["liveAssertions"]
+      }
+    }
+  ],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["mock", "live"],
+      "default": "mock",
+      "description": "Execution mode. 'mock' (default) registers MSW handlers and asserts SDK behavior offline. 'live' dispatches against a real Basecamp backend, captures raw wire bytes, and validates against the OpenAPI response schema."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable test name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed description of what this test verifies"
+    },
+    "operation": {
+      "type": "string",
+      "description": "Runner dispatch/scenario key. Usually an OpenAPI operation ID (e.g., ListProjects, GetTodo), but synthetic keys exist for SDK-surface scenarios that are not wire operations (e.g., EditTodo drives the SDK's edit closure, UpdateTodo the merge-safe update)"
+    },
+    "method": {
+      "type": "string",
+      "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
+      "description": "HTTP method for the operation's wire request. Runners enforce it against the first captured request as an implicit invariant unless the case carries explicit requestMethod assertions (multi-hop scenarios describe their full wire sequence with indexed requestMethod assertions instead)"
+    },
+    "path": {
+      "type": "string",
+      "description": "URL path pattern (e.g., /projects.json, /todos/{todoId})"
+    },
+    "pathParams": {
+      "type": "object",
+      "description": "Path parameter values for URL substitution",
+      "additionalProperties": {
+        "type": ["string", "number"]
+      }
+    },
+    "queryParams": {
+      "type": "object",
+      "description": "Query parameter values",
+      "additionalProperties": true
+    },
+    "requestBody": {
+      "type": "object",
+      "description": "Request body for POST/PUT/PATCH operations"
+    },
+    "mockResponses": {
+      "type": "array",
+      "description": "Sequence of mock responses for retry/error testing",
+      "items": {
+        "type": "object",
+        "oneOf": [
+          {
+            "required": ["status"],
+            "not": { "required": ["networkError"] }
+          },
+          {
+            "required": ["networkError"],
+            "not": { "required": ["status"] }
+          }
+        ],
+        "properties": {
+          "status": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599,
+            "description": "HTTP status code (a real 1xx–5xx code). Exactly one of `status` or `networkError` must be set per entry. Constraining the range keeps 0 out, which some runners (e.g. Go) use as the 'status not set' sentinel."
+          },
+          "networkError": {
+            "type": "boolean",
+            "const": true,
+            "description": "When true, the runner injects a genuine transport-level failure for this queued response (socket reset / connection error / thrown IOException) instead of an HTTP status. Exactly one of `status` or `networkError` must be set per entry."
+          },
+          "headers": {
+            "type": "object",
+            "description": "Response headers",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "description": "Response body (string or object)"
+          },
+          "delay": {
+            "type": "integer",
+            "description": "Delay in milliseconds before responding"
+          }
+        }
+      }
+    },
+    "assertions": {
+      "type": "array",
+      "description": "Assertions to verify behavior",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "$comment": "errorRaised is the inverse of noError and takes no `expected`: the dispatch must fail SOMEHOW, without pinning which canonical code. It exists for the malformed-response family (#576), where the six SDKs refuse the same body by six different mechanisms — a hand-written guard in TypeScript/Python/Ruby, and the model decoder in Go/Kotlin/Swift — so no single errorType is assertable. A fixture declaring it also tells the Kotlin and Swift runners that a decoder rejection is the POINT of the case rather than a malformed-fixture bug.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "requestCount",
+              "delayBetweenRequests",
+              "statusCode",
+              "responseStatus",
+              "responseBody",
+              "headerPresent",
+              "headerAbsent",
+              "headerValue",
+              "errorType",
+              "noError",
+              "errorRaised",
+              "requestPath",
+              "requestMethod",
+              "requestBody",
+              "requestBodyAbsent",
+              "errorCode",
+              "errorMessage",
+              "errorField",
+              "headerInjected",
+              "requestScheme",
+              "urlOrigin",
+              "responseMeta"
+            ]
+          },
+          "expected": {
+            "description": "Expected value for the assertion"
+          },
+          "min": {
+            "type": "number",
+            "description": "Minimum value (for range assertions)"
+          },
+          "max": {
+            "type": "number",
+            "description": "Maximum value (for range assertions)"
+          },
+          "path": {
+            "type": "string",
+            "description": "JSONPath or dot-notation path for nested value assertions. For requestBody / requestBodyAbsent, the key (dot-notation) inside the captured request body."
+          },
+          "index": {
+            "type": "integer",
+            "description": "Request index for per-request assertions: headerPresent / headerAbsent / headerInjected / requestPath / requestMethod / requestBody / requestBodyAbsent (0-based; negative values index from the end, e.g. -1 = last request). Default 0. For delayBetweenRequests it selects a single inter-request GAP (gap i is between request i and i+1); omit it to require the minimum on every gap. A delayBetweenRequests assertion never passes vacuously: a named gap the run did not produce FAILS, an omitted index on a run with no gaps FAILS, and a negative gap index is rejected rather than wrapping to the end — a timing pin exists to catch a dropped backoff, and a dropped backoff is exactly what removes the gap."
+          }
+        }
+      }
+    },
+    "configOverrides": {
+      "type": "object",
+      "description": "Override client configuration for this test case (e.g., non-localhost baseUrl for HTTPS enforcement)",
+      "properties": {
+        "baseUrl": {
+          "type": "string",
+          "description": "Override the base URL used to construct the SDK client"
+        },
+        "maxPages": {
+          "type": "integer",
+          "description": "Override the pagination safety cap (maximum number of pages to follow)"
+        },
+        "maxItems": {
+          "type": "integer",
+          "description": "Override the maximum number of items to fetch across all pages"
+        },
+        "page": {
+          "type": "integer",
+          "description": "Pin the list operation to a single page. A positive value must select exactly that page: one request, no Link rel=next follow (SPEC section 8). Runners pass it through the operation's own page option, so a fixture using it needs the dispatch case to forward it."
+        }
+      }
+    },
+    "liveAssertions": {
+      "type": "array",
+      "description": "Assertions evaluated when mode=live, against the raw wire response (not SDK-decoded structures).",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "liveCallSucceeds",
+              "liveResponseFieldsRequired",
+              "liveResponseFieldsExpected",
+              "liveSchemaValidate"
+            ],
+            "description": "liveCallSucceeds: dispatch returns without throwing, HTTP 2xx, JSON parses. liveResponseFieldsRequired: dotted paths that must be structurally present (per spec @required). liveResponseFieldsExpected: dotted paths that should be present; missing logs a warning, never fails. liveSchemaValidate: validate the raw wire body against the OpenAPI response schema for the operation."
+          },
+          "fields": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Dotted-path fields for liveResponseFieldsRequired / liveResponseFieldsExpected. Empty arrays count as present."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Set false to disable a default-on assertion such as liveSchemaValidate."
+          }
+        }
+      }
+    },
+    "fixtureIds": {
+      "type": "object",
+      "description": "Placeholder names referenced in pathParams/queryParams for live tests (e.g., PROJECT_ID, TODOLIST_ID). Resolved per the fixture-ID ladder: explicit env var → generic env var → discovery → skip.",
+      "additionalProperties": { "type": "string" }
+    },
+    "pairwiseAssertions": {
+      "not": {},
+      "description": "RETIRED and rejected. The pairwise BC4↔BC5 compare engine (scripts/compare-canary-runs.sh) was removed when BC5 replaced BC4 in production — there is no live BC4 backend to compare against; see COORDINATION.md. This property is explicitly disallowed so a fixture cannot declare pairwise rules that would validate but silently never run (nothing enforces them anymore). Recoverable from git history (PR #308) if a reachable legacy backend ever warrants restoring the engine and this definition."
+    },
+    "tags": {
+      "type": "array",
+      "description": "Tags for filtering tests (e.g., retry, pagination, idempotent)",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

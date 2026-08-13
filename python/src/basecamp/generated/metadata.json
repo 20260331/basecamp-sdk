@@ -1,0 +1,2835 @@
+{
+  "ArchiveProject": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ArchiveRecording": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CompleteTodo": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateAnswer": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateAttachment": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 2000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateBookmark": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateCampfireLine": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateCampfireUpload": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 2000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateCard": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateCardColumn": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateCardStep": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateChatbot": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateCloudFile": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateComment": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateDocument": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateEventBoost": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateFolder": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateGaugeNeedle": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateGoogleDocument": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateLineupMarker": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateMessage": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateMessageType": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateProject": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateProjectFromTemplate": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateQuestion": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateRecordingBoost": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateScheduleEntry": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateTemplate": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateTimesheetEntry": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateTodo": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateTodolist": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateTodolistGroup": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateTodosetTodo": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateTool": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateUpload": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateUploadVersion": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateVault": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateWebhook": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "CreateWormhole": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteBookmark": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteBoost": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteCampfireLine": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteChatbot": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteFolder": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteLineupMarker": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteMessageType": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteTemplate": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteTool": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteWebhook": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeleteWormhole": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DeprioritizeAssignment": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DestroyGaugeNeedle": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DestroyTimesheetEntry": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DisableCardColumnOnHold": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DisableOutOfOffice": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "DisableTool": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "EnableCardColumnOnHold": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "EnableOutOfOffice": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "EnableTool": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetAccount": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetAnswer": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetAnswersByPerson": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetAssignedTodos": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetBookmark": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetBoost": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetBubbleUps": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetCalendar": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetCampfire": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetCampfireLine": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetCard": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetCardColumn": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetCardStep": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetCardTable": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetChatbot": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetClientApproval": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetClientCorrespondence": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetClientReply": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetCloudFile": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetComment": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetDocument": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingCheckins": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingComments": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingCompletedCards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingCompletedTodos": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingFiles": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingForwards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingMessages": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingNoDueDateCards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingNoDueDateTodos": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingNotNowCards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingOpenCards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingOpenTodos": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingOverdueCards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingOverdueTodos": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingUnassignedCards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetEverythingUnassignedTodos": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetFolder": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetForward": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetForwardReply": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetGaugeNeedle": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetGoogleDocument": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetHillChart": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetInbox": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMessage": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMessageBoard": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMessageType": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMyAssignments": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMyCompletedAssignments": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMyDueAssignments": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMyNote": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMyNotifications": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMyPreferences": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetMyProfile": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetOutOfOffice": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetOverdueTodos": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetPerson": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetPersonProgress": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetProgressReport": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetProject": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetProjectConstruction": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetProjectTimeline": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetProjectTimesheet": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetQuestion": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetQuestionReminders": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetQuestionnaire": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetRecordingTimesheet": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetSchedule": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetScheduleEntry": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetScheduleEntryOccurrence": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetSearchMetadata": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetSubscription": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetTemplate": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetTimesheetEntry": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetTimesheetReport": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetTodo": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetTodolistOrGroup": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetTodoset": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetTool": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetUpcomingSchedule": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetUpload": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetVault": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "GetWebhook": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListAnswers": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListAssignablePeople": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListCampfireLines": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListCampfireUploads": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListCampfires": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListCards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListChatbots": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListClientApprovals": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListClientCorrespondences": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListClientReplies": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListComments": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListDocuments": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListEventBoosts": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListEvents": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListFolders": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListForwardReplies": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListForwards": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListGaugeNeedles": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListGauges": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListLineupMarkers": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListMessageTypes": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListMessages": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListMyBookmarks": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListMyDrafts": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListPeople": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListPingablePeople": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListProjectPeople": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListProjects": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListQuestionAnswerers": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListQuestions": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListRecordingBoosts": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListRecordings": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListScheduleEntries": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListTemplates": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListTodolistGroups": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListTodolists": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListTodos": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListUploadVersions": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListUploads": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListVaults": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ListWebhooks": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "MarkAsRead": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "MoveCard": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "MoveCardColumn": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "PauseQuestion": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "PinMessage": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "PrioritizeAssignment": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "RemoveAccountLogo": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ReorderUpNext": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ReplaceDocument": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ReplaceScheduleEntry": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ReplaceTodo": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "RepositionCardStep": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "RepositionTodo": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "RepositionTodolist": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "RepositionTodolistGroup": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "RepositionTool": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ResumeQuestion": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "Search": {
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "SetCardColumnColor": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "SetCardStepCompletion": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "SetClientVisibility": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "Subscribe": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "SubscribeToCardColumn": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "ToggleGauge": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "TrashProject": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "TrashRecording": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UnarchiveProject": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UnarchiveRecording": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UncompleteTodo": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UnpinMessage": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "Unsubscribe": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UnsubscribeFromCardColumn": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateAccountLogo": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateAccountName": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateAnswer": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateCalendar": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateCampfireLine": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateCard": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateCardColumn": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateCardStep": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateChatbot": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateCloudFile": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateComment": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateFolder": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateGaugeNeedle": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateGoogleDocument": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateHillChartSettings": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateLineupMarker": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateMessage": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateMessageType": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateMyNote": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateMyPreferences": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 2,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateMyProfile": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateProject": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateProjectAccess": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateQuestion": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateQuestionNotificationSettings": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateScheduleSettings": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateSubscription": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateTemplate": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateTimesheetEntry": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateTodolistOrGroup": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateTool": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateUpload": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateVault": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateWebhook": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  },
+  "UpdateWormhole": {
+    "idempotent": true,
+    "retry": {
+      "backoff": "exponential",
+      "base_delay_ms": 1000,
+      "max": 3,
+      "retry_on": [
+        429,
+        503
+      ]
+    }
+  }
+}

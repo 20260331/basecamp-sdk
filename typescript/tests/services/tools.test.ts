@@ -1,0 +1,261 @@
+/**
+ * Tests for the ToolsService (generated from OpenAPI spec)
+ *
+ * Note: Generated services are spec-conformant:
+ * - update() and reposition() take request objects, not bare params
+ * - Request fields follow the generated OpenAPI shapes
+ * - Client-side checks: create() rejects a missing toolType, update() rejects a
+ *   missing title; the API validates the rest
+ */
+import { describe, it, expect, beforeEach } from "vitest";
+import { http, HttpResponse } from "msw";
+import { server } from "../setup.js";
+import { createBasecampClient } from "../../src/client.js";
+import { BasecampError } from "../../src/errors.js";
+import type { BasecampClient } from "../../src/client.js";
+
+const BASE_URL = "https://3.basecampapi.com/12345";
+
+describe("ToolsService", () => {
+  let client: BasecampClient;
+
+  beforeEach(() => {
+    client = createBasecampClient({
+      accountId: "12345",
+      accessToken: "test-token",
+      enableRetry: false,
+    });
+  });
+
+  describe("get", () => {
+    it("should get a tool by ID", async () => {
+      const toolId = 222;
+      const mockTool = {
+        id: toolId,
+        name: "todoset",
+        title: "To-dos",
+        enabled: true,
+        position: 1,
+      };
+
+      server.use(
+        http.get(`${BASE_URL}/dock/tools/${toolId}`, () => {
+          return HttpResponse.json(mockTool);
+        })
+      );
+
+      const tool = await client.tools.get(toolId);
+      expect(tool.id).toBe(toolId);
+      expect(tool.name).toBe("todoset");
+      expect(tool.title).toBe("To-dos");
+    });
+
+    it("should throw not_found error for non-existent tool", async () => {
+      server.use(
+        http.get(`${BASE_URL}/dock/tools/999`, () => {
+          return HttpResponse.json({ error: "Not found" }, { status: 404 });
+        })
+      );
+
+      await expect(client.tools.get(999)).rejects.toThrow(BasecampError);
+    });
+  });
+
+  describe("create", () => {
+    it("should create a tool in a bucket", async () => {
+      const bucketId = 456;
+      const toolType = "Message::Board";
+      const mockTool = {
+        id: 333,
+        name: "message_board",
+        title: "Message Board (Copy)",
+        enabled: true,
+        position: 5,
+      };
+
+      server.use(
+        http.post(
+          `${BASE_URL}/buckets/${bucketId}/dock/tools.json`,
+          async ({ request }) => {
+            const body = await request.json() as { tool_type: string; title: string };
+            expect(body.tool_type).toBe(toolType);
+            expect(body.title).toBe("Message Board (Copy)");
+            return HttpResponse.json(mockTool, { status: 201 });
+          }
+        )
+      );
+
+      const tool = await client.tools.create(bucketId, { toolType, title: "Message Board (Copy)" });
+      expect(tool.id).toBe(333);
+      expect(tool.title).toBe("Message Board (Copy)");
+    });
+
+    it("omits title from the request body when not provided", async () => {
+      const bucketId = 456;
+      const toolType = "Message::Board";
+      const mockTool = {
+        id: 334,
+        name: "message_board",
+        title: "Message Board",
+        enabled: true,
+        position: 5,
+      };
+
+      server.use(
+        http.post(
+          `${BASE_URL}/buckets/${bucketId}/dock/tools.json`,
+          async ({ request }) => {
+            const body = await request.json() as Record<string, unknown>;
+            expect(body).toEqual({ tool_type: toolType });
+            return HttpResponse.json(mockTool, { status: 201 });
+          }
+        )
+      );
+
+      const tool = await client.tools.create(bucketId, { toolType });
+      expect(tool.id).toBe(334);
+    });
+
+    it("requires a tool type", async () => {
+      await expect(
+        client.tools.create(456, { toolType: "" })
+      ).rejects.toMatchObject({ code: "validation", message: "Tool type is required" });
+    });
+
+    // visibleToClients is tri-state: undefined omits the key, true/false are sent
+    // verbatim. An explicit false must reach the wire (not be dropped). Only
+    // Chat::Transcript and Kanban::Board honor it; all other tool types ignore it.
+    it("should send visible_to_clients tri-state in request body", async () => {
+      const bucketId = 456;
+      const toolType = "Chat::Transcript";
+      const mockTool = { id: 335, name: "chat", title: "Campfire", enabled: true, position: 5 };
+      let capturedBody: Record<string, unknown> = {};
+
+      server.use(
+        http.post(
+          `${BASE_URL}/buckets/${bucketId}/dock/tools.json`,
+          async ({ request }) => {
+            capturedBody = (await request.json()) as Record<string, unknown>;
+            return HttpResponse.json(mockTool, { status: 201 });
+          }
+        )
+      );
+
+      await client.tools.create(bucketId, { toolType });
+      expect("visible_to_clients" in capturedBody).toBe(false);
+
+      await client.tools.create(bucketId, { toolType, visibleToClients: true });
+      expect(capturedBody.visible_to_clients).toBe(true);
+
+      await client.tools.create(bucketId, { toolType, visibleToClients: false });
+      expect("visible_to_clients" in capturedBody).toBe(true);
+      expect(capturedBody.visible_to_clients).toBe(false);
+    });
+  });
+
+  describe("update", () => {
+    it("should update (rename) a tool", async () => {
+      const toolId = 222;
+      const mockTool = {
+        id: toolId,
+        name: "todoset",
+        title: "Sprint Backlog",
+        enabled: true,
+      };
+
+      server.use(
+        http.put(
+          `${BASE_URL}/dock/tools/${toolId}`,
+          async ({ request }) => {
+            const body = await request.json() as { title: string };
+            expect(body.title).toBe("Sprint Backlog");
+            return HttpResponse.json(mockTool);
+          }
+        )
+      );
+
+      // Generated service takes a request object
+      const tool = await client.tools.update(toolId, { title: "Sprint Backlog" });
+      expect(tool.title).toBe("Sprint Backlog");
+    });
+
+    // Client-side validation short-circuits before any HTTP call. No MSW handler
+    // is registered here, so a leaked request fails via onUnhandledRequest: "error".
+    it("rejects a missing title", async () => {
+      await expect(
+        client.tools.update(1, { title: "" })
+      ).rejects.toMatchObject({ code: "validation", message: "Title is required" });
+    });
+  });
+
+  describe("delete", () => {
+    it("should delete a tool", async () => {
+      const toolId = 222;
+
+      server.use(
+        http.delete(`${BASE_URL}/dock/tools/${toolId}`, () => {
+          return new HttpResponse(null, { status: 204 });
+        })
+      );
+
+      await expect(client.tools.delete(toolId)).resolves.toBeUndefined();
+    });
+  });
+
+  describe("enable", () => {
+    it("should enable a tool on the dock", async () => {
+      const toolId = 222;
+
+      server.use(
+        http.post(
+          `${BASE_URL}/recordings/${toolId}/position.json`,
+          () => {
+            return new HttpResponse(null, { status: 204 });
+          }
+        )
+      );
+
+      await expect(client.tools.enable(toolId)).resolves.toBeUndefined();
+    });
+  });
+
+  describe("disable", () => {
+    it("should disable a tool from the dock", async () => {
+      const toolId = 222;
+
+      server.use(
+        http.delete(
+          `${BASE_URL}/recordings/${toolId}/position.json`,
+          () => {
+            return new HttpResponse(null, { status: 204 });
+          }
+        )
+      );
+
+      await expect(client.tools.disable(toolId)).resolves.toBeUndefined();
+    });
+  });
+
+  describe("reposition", () => {
+    it("should change the position of a tool on the dock", async () => {
+      const toolId = 222;
+
+      server.use(
+        http.put(
+          `${BASE_URL}/recordings/${toolId}/position.json`,
+          async ({ request }) => {
+            const body = await request.json() as { position: number };
+            expect(body.position).toBe(1);
+            return new HttpResponse(null, { status: 204 });
+          }
+        )
+      );
+
+      // Generated service takes a request object
+      await expect(
+        client.tools.reposition(toolId, { position: 1 })
+      ).resolves.toBeUndefined();
+    });
+
+  });
+});

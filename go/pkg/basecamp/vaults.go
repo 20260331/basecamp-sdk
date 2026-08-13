@@ -1,0 +1,1429 @@
+package basecamp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"time"
+
+	"github.com/basecamp/basecamp-sdk/go/pkg/generated"
+)
+
+// VaultListOptions specifies options for listing vaults.
+type VaultListOptions struct {
+	// Limit is the maximum number of vaults to return.
+	// If 0 (default), returns all vaults. Use a positive value to cap results.
+	Limit int
+
+	// Page, if positive, fetches only that page and disables auto-pagination:
+	// exactly one request, no Link rel="next" follow (SPEC §8). A positive
+	// Limit still trims that page; the per-operation default limit does not
+	// apply to it. Use 0 to paginate through all results up to Limit.
+	Page int
+}
+
+// VaultListResult contains the results from listing vaults.
+type VaultListResult struct {
+	// Vaults is the list of vaults returned.
+	Vaults []Vault
+	// Meta contains pagination metadata (total count, etc.).
+	Meta ListMeta
+}
+
+// DocumentListOptions specifies options for listing documents.
+type DocumentListOptions struct {
+	// Limit is the maximum number of documents to return.
+	// If 0 (default), returns all documents. Use a positive value to cap results.
+	Limit int
+
+	// Page, if positive, fetches only that page and disables auto-pagination:
+	// exactly one request, no Link rel="next" follow (SPEC §8). A positive
+	// Limit still trims that page; the per-operation default limit does not
+	// apply to it. Use 0 to paginate through all results up to Limit.
+	Page int
+}
+
+// DocumentListResult contains the results from listing documents.
+type DocumentListResult struct {
+	// Documents is the list of documents returned.
+	Documents []Document
+	// Meta contains pagination metadata (total count, etc.).
+	Meta ListMeta
+}
+
+// UploadListOptions specifies options for listing uploads.
+type UploadListOptions struct {
+	// Limit is the maximum number of uploads to return.
+	// If 0 (default), returns all uploads. Use a positive value to cap results.
+	Limit int
+
+	// Page, if positive, fetches only that page and disables auto-pagination:
+	// exactly one request, no Link rel="next" follow (SPEC §8). A positive
+	// Limit still trims that page; the per-operation default limit does not
+	// apply to it. Use 0 to paginate through all results up to Limit.
+	Page int
+}
+
+// UploadListResult contains the results from listing uploads.
+type UploadListResult struct {
+	// Uploads is the list of uploads returned.
+	Uploads []Upload
+	// Meta contains pagination metadata (total count, etc.).
+	Meta ListMeta
+}
+
+// Vault represents a Basecamp vault (folder) in the Files tool.
+type Vault struct {
+	ID               int64     `json:"id"`
+	Status           string    `json:"status"`
+	VisibleToClients bool      `json:"visible_to_clients"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Title            string    `json:"title"`
+	InheritsStatus   bool      `json:"inherits_status"`
+	Type             string    `json:"type"`
+	URL              string    `json:"url"`
+	AppURL           string    `json:"app_url"`
+	BookmarkURL      string    `json:"bookmark_url"`
+	Position         int       `json:"position,omitempty"`
+	Parent           *Parent   `json:"parent,omitempty"`
+	Bucket           *Bucket   `json:"bucket,omitempty"`
+	Creator          *Person   `json:"creator,omitempty"`
+	DocumentsCount   int       `json:"documents_count"`
+	DocumentsURL     string    `json:"documents_url"`
+	UploadsCount     int       `json:"uploads_count"`
+	UploadsURL       string    `json:"uploads_url"`
+	VaultsCount      int       `json:"vaults_count"`
+	VaultsURL        string    `json:"vaults_url"`
+}
+
+// Document represents a Basecamp document in a vault.
+type Document struct {
+	ID               int64     `json:"id"`
+	Status           string    `json:"status"`
+	VisibleToClients bool      `json:"visible_to_clients"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Title            string    `json:"title"`
+	InheritsStatus   bool      `json:"inherits_status"`
+	Type             string    `json:"type"`
+	URL              string    `json:"url"`
+	AppURL           string    `json:"app_url"`
+	BookmarkURL      string    `json:"bookmark_url"`
+	SubscriptionURL  string    `json:"subscription_url"`
+	CommentsCount    int       `json:"comments_count"`
+	BoostsCount      int       `json:"boosts_count,omitempty"`
+	BoostsURL        string    `json:"boosts_url,omitempty"`
+	CommentsURL      string    `json:"comments_url"`
+	Position         int       `json:"position,omitempty"`
+	Parent           *Parent   `json:"parent,omitempty"`
+	Bucket           *Bucket   `json:"bucket,omitempty"`
+	Creator          *Person   `json:"creator,omitempty"`
+	Content          string    `json:"content"`
+	// ContentAttachments holds structured metadata for the downloadable files
+	// embedded in the rich text Content. @required — the API always sends this
+	// array (empty when the content has no inline files). No omitempty, so on
+	// marshal a non-nil slice emits its elements ([] when empty) and a nil
+	// slice emits null; the key is never
+	// dropped. Decode distinguishes a server-sent [] (non-nil) from nil. See
+	// RichTextAttachment.
+	ContentAttachments []RichTextAttachment `json:"content_attachments"`
+}
+
+// Upload represents a Basecamp uploaded file in a vault.
+type Upload struct {
+	ID               int64     `json:"id"`
+	Status           string    `json:"status"`
+	VisibleToClients bool      `json:"visible_to_clients"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Title            string    `json:"title"`
+	InheritsStatus   bool      `json:"inherits_status"`
+	Type             string    `json:"type"`
+	URL              string    `json:"url"`
+	AppURL           string    `json:"app_url"`
+	BookmarkURL      string    `json:"bookmark_url"`
+	SubscriptionURL  string    `json:"subscription_url"`
+	CommentsCount    int       `json:"comments_count"`
+	BoostsCount      int       `json:"boosts_count,omitempty"`
+	BoostsURL        string    `json:"boosts_url,omitempty"`
+	CommentsURL      string    `json:"comments_url"`
+	Position         int       `json:"position,omitempty"`
+	Parent           *Parent   `json:"parent,omitempty"`
+	Bucket           *Bucket   `json:"bucket,omitempty"`
+	Creator          *Person   `json:"creator,omitempty"`
+	Description      string    `json:"description"`
+	// DescriptionAttachments holds structured metadata for the downloadable files
+	// embedded in the rich text Description. @required — the API always sends this
+	// array (empty when the description has no inline files). No omitempty, so on
+	// marshal a non-nil slice emits its elements ([] when empty) and a nil
+	// slice emits null; the key is never
+	// dropped. Decode distinguishes a server-sent [] (non-nil) from nil. See
+	// RichTextAttachment.
+	DescriptionAttachments []RichTextAttachment `json:"description_attachments"`
+	ContentType            string               `json:"content_type"`
+	ByteSize               int64                `json:"byte_size"`
+	Width                  int                  `json:"width,omitempty"`
+	Height                 int                  `json:"height,omitempty"`
+	DownloadURL            string               `json:"download_url"`
+	Filename               string               `json:"filename"`
+}
+
+// UnmarshalJSON decodes an Upload from JSON, handling the BC3 API's
+// float-encoded integer dimensions (e.g. "width": 1024.0). Delegates
+// through the generated type (which uses FlexInt) so the public struct
+// can keep plain int fields while remaining directly decodable from the
+// API wire format.
+func (u *Upload) UnmarshalJSON(data []byte) error {
+	var gu generated.Upload
+	if err := json.Unmarshal(data, &gu); err != nil {
+		return err
+	}
+	*u = uploadFromGenerated(gu)
+	return nil
+}
+
+// CreateVaultRequest specifies the parameters for creating a vault (folder).
+type CreateVaultRequest struct {
+	// Title is the vault name (required).
+	Title string `json:"title"`
+}
+
+// UpdateVaultRequest specifies the parameters for updating a vault.
+type UpdateVaultRequest struct {
+	// Title is the vault name.
+	Title string `json:"title,omitempty"`
+}
+
+// CreateDocumentRequest specifies the parameters for creating a document.
+type CreateDocumentRequest struct {
+	// Title is the document title (required).
+	Title string `json:"title"`
+	// Content is the document body in HTML (optional).
+	Content string `json:"content,omitempty"`
+	// Status is either "drafted" or "active" (optional, defaults to active).
+	Status string `json:"status,omitempty"`
+	// Subscriptions controls who gets notified and subscribed.
+	// nil: field omitted (server default). &[]int64{}: subscribe nobody. &[]int64{1,2}: those people.
+	Subscriptions *[]int64 `json:"subscriptions,omitempty"`
+	// VisibleToClients sets client visibility at create time (optional, tri-state).
+	// nil omits the field so the server applies its own default visibility rule; a
+	// non-nil value is sent verbatim, and an explicit false reaches the wire (the
+	// pointer distinguishes unset from false).
+	VisibleToClients *bool `json:"visible_to_clients,omitempty"`
+}
+
+// UpdateUploadRequest specifies the parameters for updating an upload.
+type UpdateUploadRequest struct {
+	// Description is the upload description, and is presence-aware.
+	// nil omits the field, leaving the current description alone.
+	// Ptr("") clears it. Ptr(v) sets it.
+	Description *string `json:"description,omitempty"`
+	// BaseName is the filename without extension.
+	//
+	// A plain string rather than a pointer, unlike Description: Upload#base_name=
+	// guards on new_base_name.present?, so "" and absent are the same write
+	// server-side. There is no third state for a pointer to express.
+	BaseName string `json:"base_name,omitempty"`
+}
+
+// CreateUploadRequest specifies the parameters for creating an upload.
+type CreateUploadRequest struct {
+	// AttachableSGID is the signed global ID for an uploaded attachment (required).
+	// See the Create Attachment endpoint for how to upload files.
+	AttachableSGID string `json:"attachable_sgid"`
+	// Description is the upload description in HTML (optional).
+	Description string `json:"description,omitempty"`
+	// BaseName is the filename without extension (optional).
+	BaseName string `json:"base_name,omitempty"`
+	// Subscriptions controls who gets notified and subscribed.
+	// nil: field omitted (server default). &[]int64{}: subscribe nobody. &[]int64{1,2}: those people.
+	Subscriptions *[]int64 `json:"subscriptions,omitempty"`
+	// VisibleToClients sets client visibility at create time (optional, tri-state).
+	// nil omits the field so the server applies its own default visibility rule; a
+	// non-nil value is sent verbatim, and an explicit false reaches the wire (the
+	// pointer distinguishes unset from false).
+	VisibleToClients *bool `json:"visible_to_clients,omitempty"`
+}
+
+// VaultsService handles vault (folder) operations.
+type VaultsService struct {
+	client *AccountClient
+}
+
+// NewVaultsService creates a new VaultsService.
+func NewVaultsService(client *AccountClient) *VaultsService {
+	return &VaultsService{client: client}
+}
+
+// Get returns a vault by ID.
+func (s *VaultsService) Get(ctx context.Context, vaultID int64) (result *Vault, err error) {
+	op := OperationInfo{
+		Service: "Vaults", Operation: "Get",
+		ResourceType: "vault", IsMutation: false,
+		ResourceID: vaultID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.GetVaultWithResponse(ctx, s.client.accountID, vaultID)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	vault := vaultFromGenerated(*resp.JSON200)
+	return &vault, nil
+}
+
+// List returns all subfolders (child vaults) in a vault.
+//
+// By default, returns all vaults (no limit). Use Limit to cap results.
+//
+// Pagination options:
+//   - Limit: maximum number of vaults to return (0 = all)
+//   - Page: if positive, fetches only that page and disables auto-pagination
+//
+// The returned VaultListResult includes pagination metadata (TotalCount from
+// X-Total-Count header) when available.
+func (s *VaultsService) List(ctx context.Context, vaultID int64, opts *VaultListOptions) (result *VaultListResult, err error) {
+	op := OperationInfo{
+		Service: "Vaults", Operation: "List",
+		ResourceType: "vault", IsMutation: false,
+		ResourceID: vaultID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	// Call generated client for first page (spec-conformant - no manual path construction)
+	var params *generated.ListVaultsParams
+	if opts != nil && opts.Page > 0 {
+		var page *int32
+		if page, err = pageParam(opts.Page); err != nil {
+			return nil, err
+		}
+		params = &generated.ListVaultsParams{Page: page}
+	}
+
+	resp, err := s.client.parent.gen.ListVaultsWithResponse(ctx, s.client.accountID, vaultID, params)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+
+	// Capture total count from X-Total-Count header (first page only)
+	totalCount := parseTotalCount(resp.HTTPResponse)
+
+	// Parse first page
+	var vaults []Vault
+	if resp.JSON200 != nil {
+		for _, gv := range *resp.JSON200 {
+			vaults = append(vaults, vaultFromGenerated(gv))
+		}
+	}
+
+	// Handle single page fetch (--page flag)
+	if opts != nil && opts.Page > 0 {
+		keep, truncated := pageCap(len(vaults), opts.Limit, resp.HTTPResponse)
+		return &VaultListResult{Vaults: vaults[:keep], Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+	}
+
+	// Determine limit: 0 = all (default for vaults), >0 = specific limit
+	limit := 0 // default to all for vaults (structural index)
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
+	}
+
+	// Check if we already have enough items
+	if limit > 0 && len(vaults) >= limit {
+		return &VaultListResult{Vaults: vaults[:limit], Meta: ListMeta{TotalCount: totalCount, Truncated: isFirstPageTruncated(resp.HTTPResponse, len(vaults), limit)}}, nil
+	}
+
+	// Follow pagination via Link headers (uses absolute URLs from API, no path construction)
+	rawMore, truncated, err := s.client.parent.followPagination(ctx, resp.HTTPResponse, len(vaults), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse additional pages
+	for _, raw := range rawMore {
+		var gv generated.Vault
+		if err := json.Unmarshal(raw, &gv); err != nil {
+			return nil, fmt.Errorf("failed to parse vault: %w", err)
+		}
+		vaults = append(vaults, vaultFromGenerated(gv))
+	}
+
+	return &VaultListResult{Vaults: vaults, Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+}
+
+// Create creates a new subfolder (child vault) in a vault.
+// Returns the created vault.
+func (s *VaultsService) Create(ctx context.Context, vaultID int64, req *CreateVaultRequest) (result *Vault, err error) {
+	op := OperationInfo{
+		Service: "Vaults", Operation: "Create",
+		ResourceType: "vault", IsMutation: true,
+		ResourceID: vaultID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil || req.Title == "" {
+		err = ErrUsage("vault title is required")
+		return nil, err
+	}
+
+	body := generated.CreateVaultJSONRequestBody{
+		Title: req.Title,
+	}
+
+	resp, err := s.client.parent.gen.CreateVaultWithResponse(ctx, s.client.accountID, vaultID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON201 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	vault := vaultFromGenerated(*resp.JSON201)
+	return &vault, nil
+}
+
+// Update updates an existing vault.
+// Returns the updated vault.
+func (s *VaultsService) Update(ctx context.Context, vaultID int64, req *UpdateVaultRequest) (result *Vault, err error) {
+	op := OperationInfo{
+		Service: "Vaults", Operation: "Update",
+		ResourceType: "vault", IsMutation: true,
+		ResourceID: vaultID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil {
+		err = ErrUsage("update request is required")
+		return nil, err
+	}
+
+	body := generated.UpdateVaultJSONRequestBody{}
+	if req.Title != "" {
+		body.Title = &req.Title
+	}
+
+	resp, err := s.client.parent.gen.UpdateVaultWithResponse(ctx, s.client.accountID, vaultID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	vault := vaultFromGenerated(*resp.JSON200)
+	return &vault, nil
+}
+
+// DocumentsService handles document operations.
+type DocumentsService struct {
+	client *AccountClient
+}
+
+// NewDocumentsService creates a new DocumentsService.
+func NewDocumentsService(client *AccountClient) *DocumentsService {
+	return &DocumentsService{client: client}
+}
+
+// Get returns a document by ID.
+func (s *DocumentsService) Get(ctx context.Context, documentID int64) (result *Document, err error) {
+	op := OperationInfo{
+		Service: "Documents", Operation: "Get",
+		ResourceType: "document", IsMutation: false,
+		ResourceID: documentID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	// Split into request and decode rather than calling GetDocumentWithResponse,
+	// so the two error origins never mix. The merge-safe composites read this
+	// body and write every field of it back, so a malformed one has to arrive as
+	// the documented statusless api_error (documentDecodeError in documents.go)
+	// — but everything BEFORE the response is a different failure with its own
+	// meaning, and no inspection of the returned error can reliably tell them
+	// apart. GetDocument covers the gate's successors: the per-request auth
+	// editor (a token provider or custom AuthStrategy may return ANY error), the
+	// transport, and context cancellation. Those return verbatim, so errors.Is
+	// keeps working; only ParseGetDocumentResponse's failure is a decode failure.
+	//nolint:bodyclose // ParseGetDocumentResponse below closes the body (it defers
+	// rsp.Body.Close()), and it is called unconditionally on the next line.
+	httpResp, err := s.client.parent.gen.GetDocument(ctx, s.client.accountID, documentID)
+	if err != nil {
+		return nil, err
+	}
+	resp, decodeErr := generated.ParseGetDocumentResponse(httpResp)
+	if decodeErr != nil {
+		err = documentDecodeError(decodeErr)
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = documentDecodeError(fmt.Errorf("the response carried no document object"))
+		return nil, err
+	}
+
+	document := documentFromGenerated(*resp.JSON200)
+	return &document, nil
+}
+
+// List returns all documents in a vault.
+//
+// By default, returns all documents (no limit). Use Limit to cap results.
+//
+// Pagination options:
+//   - Limit: maximum number of documents to return (0 = all)
+//   - Page: if positive, fetches only that page and disables auto-pagination
+//
+// The returned DocumentListResult includes pagination metadata (TotalCount from
+// X-Total-Count header) when available.
+func (s *DocumentsService) List(ctx context.Context, vaultID int64, opts *DocumentListOptions) (result *DocumentListResult, err error) {
+	op := OperationInfo{
+		Service: "Documents", Operation: "List",
+		ResourceType: "document", IsMutation: false,
+		ResourceID: vaultID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	// Call generated client for first page (spec-conformant - no manual path construction)
+	var params *generated.ListDocumentsParams
+	if opts != nil && opts.Page > 0 {
+		var page *int32
+		if page, err = pageParam(opts.Page); err != nil {
+			return nil, err
+		}
+		params = &generated.ListDocumentsParams{Page: page}
+	}
+
+	resp, err := s.client.parent.gen.ListDocumentsWithResponse(ctx, s.client.accountID, vaultID, params)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+
+	// Capture total count from X-Total-Count header (first page only)
+	totalCount := parseTotalCount(resp.HTTPResponse)
+
+	// Parse first page
+	var documents []Document
+	if resp.JSON200 != nil {
+		for _, gd := range *resp.JSON200 {
+			documents = append(documents, documentFromGenerated(gd))
+		}
+	}
+
+	// Handle single page fetch (--page flag)
+	if opts != nil && opts.Page > 0 {
+		keep, truncated := pageCap(len(documents), opts.Limit, resp.HTTPResponse)
+		return &DocumentListResult{Documents: documents[:keep], Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+	}
+
+	// Determine limit: 0 = all (default for documents), >0 = specific limit
+	limit := 0 // default to all for documents
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
+	}
+
+	// Check if we already have enough items
+	if limit > 0 && len(documents) >= limit {
+		return &DocumentListResult{Documents: documents[:limit], Meta: ListMeta{TotalCount: totalCount, Truncated: isFirstPageTruncated(resp.HTTPResponse, len(documents), limit)}}, nil
+	}
+
+	// Follow pagination via Link headers (uses absolute URLs from API, no path construction)
+	rawMore, truncated, err := s.client.parent.followPagination(ctx, resp.HTTPResponse, len(documents), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse additional pages
+	for _, raw := range rawMore {
+		var gd generated.Document
+		if err := json.Unmarshal(raw, &gd); err != nil {
+			return nil, fmt.Errorf("failed to parse document: %w", err)
+		}
+		documents = append(documents, documentFromGenerated(gd))
+	}
+
+	return &DocumentListResult{Documents: documents, Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+}
+
+// Create creates a new document in a vault.
+// Returns the created document.
+func (s *DocumentsService) Create(ctx context.Context, vaultID int64, req *CreateDocumentRequest) (result *Document, err error) {
+	op := OperationInfo{
+		Service: "Documents", Operation: "Create",
+		ResourceType: "document", IsMutation: true,
+		ResourceID: vaultID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil || req.Title == "" {
+		err = ErrUsage("document title is required")
+		return nil, err
+	}
+
+	body := generated.CreateDocumentJSONRequestBody{
+		Title:            req.Title,
+		Content:          omitzero(req.Content),
+		Status:           omitzero(req.Status),
+		Subscriptions:    req.Subscriptions,
+		VisibleToClients: req.VisibleToClients,
+	}
+
+	resp, err := s.client.parent.gen.CreateDocumentWithResponse(ctx, s.client.accountID, vaultID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON201 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	document := documentFromGenerated(*resp.JSON201)
+	return &document, nil
+}
+
+// The Documents write surface — the merge-safe Update, the read-modify-write
+// Edit, and the verbatim Replace — lives in documents.go.
+
+// Trash moves a document to the trash.
+// Trashed documents can be recovered from the trash.
+func (s *DocumentsService) Trash(ctx context.Context, documentID int64) (err error) {
+	op := OperationInfo{
+		Service: "Documents", Operation: "Trash",
+		ResourceType: "document", IsMutation: true,
+		ResourceID: documentID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.TrashRecordingWithResponse(ctx, s.client.accountID, documentID)
+	if err != nil {
+		return err
+	}
+	return checkResponse(resp.HTTPResponse, resp.Body)
+}
+
+// UploadsService handles upload (file) operations.
+type UploadsService struct {
+	client *AccountClient
+}
+
+// NewUploadsService creates a new UploadsService.
+func NewUploadsService(client *AccountClient) *UploadsService {
+	return &UploadsService{client: client}
+}
+
+// Get returns an upload by ID.
+func (s *UploadsService) Get(ctx context.Context, uploadID int64) (result *Upload, err error) {
+	op := OperationInfo{
+		Service: "Uploads", Operation: "Get",
+		ResourceType: "upload", IsMutation: false,
+		ResourceID: uploadID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.GetUploadWithResponse(ctx, s.client.accountID, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	upload := uploadFromGenerated(*resp.JSON200)
+	return &upload, nil
+}
+
+// List returns all uploads in a vault.
+//
+// By default, returns all uploads (no limit). Use Limit to cap results.
+//
+// Pagination options:
+//   - Limit: maximum number of uploads to return (0 = all)
+//   - Page: if positive, fetches only that page and disables auto-pagination
+//
+// The returned UploadListResult includes pagination metadata (TotalCount from
+// X-Total-Count header) when available.
+func (s *UploadsService) List(ctx context.Context, vaultID int64, opts *UploadListOptions) (result *UploadListResult, err error) {
+	op := OperationInfo{
+		Service: "Uploads", Operation: "List",
+		ResourceType: "upload", IsMutation: false,
+		ResourceID: vaultID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	// Call generated client for first page (spec-conformant - no manual path construction)
+	var params *generated.ListUploadsParams
+	if opts != nil && opts.Page > 0 {
+		var page *int32
+		if page, err = pageParam(opts.Page); err != nil {
+			return nil, err
+		}
+		params = &generated.ListUploadsParams{Page: page}
+	}
+
+	resp, err := s.client.parent.gen.ListUploadsWithResponse(ctx, s.client.accountID, vaultID, params)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+
+	// Capture total count from X-Total-Count header (first page only)
+	totalCount := parseTotalCount(resp.HTTPResponse)
+
+	// Parse first page
+	var uploads []Upload
+	if resp.JSON200 != nil {
+		for _, gu := range *resp.JSON200 {
+			uploads = append(uploads, uploadFromGenerated(gu))
+		}
+	}
+
+	// Handle single page fetch (--page flag)
+	if opts != nil && opts.Page > 0 {
+		keep, truncated := pageCap(len(uploads), opts.Limit, resp.HTTPResponse)
+		return &UploadListResult{Uploads: uploads[:keep], Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+	}
+
+	// Determine limit: 0 = all (default for uploads), >0 = specific limit
+	limit := 0 // default to all for uploads
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
+	}
+
+	// Check if we already have enough items
+	if limit > 0 && len(uploads) >= limit {
+		return &UploadListResult{Uploads: uploads[:limit], Meta: ListMeta{TotalCount: totalCount, Truncated: isFirstPageTruncated(resp.HTTPResponse, len(uploads), limit)}}, nil
+	}
+
+	// Follow pagination via Link headers (uses absolute URLs from API, no path construction)
+	rawMore, truncated, err := s.client.parent.followPagination(ctx, resp.HTTPResponse, len(uploads), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse additional pages
+	for _, raw := range rawMore {
+		var gu generated.Upload
+		if err := json.Unmarshal(raw, &gu); err != nil {
+			return nil, fmt.Errorf("failed to parse upload: %w", err)
+		}
+		uploads = append(uploads, uploadFromGenerated(gu))
+	}
+
+	return &UploadListResult{Uploads: uploads, Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+}
+
+// Update updates an existing upload.
+// Returns the updated upload.
+func (s *UploadsService) Update(ctx context.Context, uploadID int64, req *UpdateUploadRequest) (result *Upload, err error) {
+	op := OperationInfo{
+		Service: "Uploads", Operation: "Update",
+		ResourceType: "upload", IsMutation: true,
+		ResourceID: uploadID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil {
+		err = ErrUsage("update request is required")
+		return nil, err
+	}
+
+	body := generated.UpdateUploadJSONRequestBody{
+		Description: req.Description,
+	}
+	if req.BaseName != "" {
+		body.BaseName = &req.BaseName
+	}
+
+	resp, err := s.client.parent.gen.UpdateUploadWithResponse(ctx, s.client.accountID, uploadID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON200 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	upload := uploadFromGenerated(*resp.JSON200)
+	return &upload, nil
+}
+
+// Create creates a new upload in a vault.
+// The attachable_sgid must be obtained from the Create Attachment endpoint.
+// Returns the created upload.
+func (s *UploadsService) Create(ctx context.Context, vaultID int64, req *CreateUploadRequest) (result *Upload, err error) {
+	op := OperationInfo{
+		Service: "Uploads", Operation: "Create",
+		ResourceType: "upload", IsMutation: true,
+		ResourceID: vaultID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil || req.AttachableSGID == "" {
+		err = ErrUsage("upload attachable_sgid is required")
+		return nil, err
+	}
+
+	body := generated.CreateUploadJSONRequestBody{
+		AttachableSgid:   req.AttachableSGID,
+		Description:      omitzero(req.Description),
+		BaseName:         omitzero(req.BaseName),
+		Subscriptions:    req.Subscriptions,
+		VisibleToClients: req.VisibleToClients,
+	}
+
+	resp, err := s.client.parent.gen.CreateUploadWithResponse(ctx, s.client.accountID, vaultID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON201 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	upload := uploadFromGenerated(*resp.JSON201)
+	return &upload, nil
+}
+
+// CreateUploadVersionRequest specifies the parameters for replacing an upload's file.
+type CreateUploadVersionRequest struct {
+	// AttachableSGID is the signed global ID for an uploaded attachment (required).
+	// See the Create Attachment endpoint for how to upload files.
+	AttachableSGID string `json:"attachable_sgid"`
+	// BaseName is the filename without extension (optional). Omit it to keep the
+	// name of the file you uploaded.
+	//
+	// A plain string rather than a pointer, unlike Description: Upload#base_name=
+	// guards on new_base_name.present?, so "" and absent are the same write
+	// server-side. There is no third state for a pointer to express.
+	BaseName string `json:"base_name,omitempty"`
+	// Description is the upload description in HTML, and is presence-aware.
+	// nil omits the field, carrying the previous version's description forward.
+	// Ptr("") clears it. Ptr(v) sets it.
+	Description *string `json:"description,omitempty"`
+	// Notify selects who to notify: "default", "everyone", or "custom" (the
+	// people in Subscriptions). nil omits the field.
+	//
+	// Leave both this and Subscriptions nil to notify nobody. A Subscriptions
+	// list sent without Notify is read as "custom".
+	Notify *string `json:"notify,omitempty"`
+	// Subscriptions are the people to notify about the replacement and subscribe
+	// to the upload. nil omits the field.
+	Subscriptions *[]int64 `json:"subscriptions,omitempty"`
+}
+
+// CreateVersion replaces an upload's file with a new version.
+// The attachable_sgid must be obtained from the Create Attachment endpoint.
+//
+// The recording keeps its id, its URL and its comments; the previous file
+// becomes a past version. Use this instead of Create when publishing a new
+// release of the same file, so its published link keeps working.
+//
+// Returns the upload with its new file.
+func (s *UploadsService) CreateVersion(ctx context.Context, uploadID int64, req *CreateUploadVersionRequest) (result *Upload, err error) {
+	op := OperationInfo{
+		Service: "Uploads", Operation: "CreateVersion",
+		ResourceType: "upload", IsMutation: true,
+		ResourceID: uploadID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	if req == nil || req.AttachableSGID == "" {
+		err = ErrUsage("upload version attachable_sgid is required")
+		return nil, err
+	}
+
+	body := generated.CreateUploadVersionJSONRequestBody{
+		AttachableSgid: req.AttachableSGID,
+		BaseName:       omitzero(req.BaseName),
+		Description:    req.Description,
+		Notify:         req.Notify,
+		Subscriptions:  req.Subscriptions,
+	}
+
+	resp, err := s.client.parent.gen.CreateUploadVersionWithResponse(ctx, s.client.accountID, uploadID, body)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+	if resp.JSON201 == nil {
+		err = fmt.Errorf("unexpected empty response")
+		return nil, err
+	}
+
+	upload := uploadFromGenerated(*resp.JSON201)
+	return &upload, nil
+}
+
+// Trash moves an upload to the trash.
+// Trashed uploads can be recovered from the trash.
+func (s *UploadsService) Trash(ctx context.Context, uploadID int64) (err error) {
+	op := OperationInfo{
+		Service: "Uploads", Operation: "Trash",
+		ResourceType: "upload", IsMutation: true,
+		ResourceID: uploadID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	resp, err := s.client.parent.gen.TrashRecordingWithResponse(ctx, s.client.accountID, uploadID)
+	if err != nil {
+		return err
+	}
+	return checkResponse(resp.HTTPResponse, resp.Body)
+}
+
+// UploadVersionListOptions specifies options for listing upload versions.
+type UploadVersionListOptions struct {
+	// Limit is the maximum number of versions to return.
+	// If 0 (default), returns all versions.
+	Limit int
+
+	// Page: the page number is ignored -- the upload-versions endpoint is not
+	// paginated server-side -- but any positive value still disables
+	// auto-pagination, returning the single response as-is without applying Limit.
+	Page int
+}
+
+// UploadVersion is a version event for an upload, plus the file it recorded.
+//
+// Action is one of "created", "active" (the upload's publication) or
+// "blob_changed" (a file replacement).
+//
+// To list the file's PAST versions, select entries whose Upload is non-nil and
+// whose Upload.Current is false. Filtering on "blob_changed" is the tempting
+// shortcut and the wrong one: the original file is recorded by the "created" or
+// "active" event, so that filter drops the original and keeps the current file
+// — the opposite of what it reads like.
+type UploadVersion struct {
+	// ID is the event ID, not the upload's.
+	ID int64 `json:"id"`
+	// RecordingID is the upload recording this version belongs to.
+	RecordingID int64 `json:"recording_id"`
+	// Action is "created", "active" or "blob_changed".
+	Action string `json:"action"`
+	// CreatedAt is when the version was recorded.
+	CreatedAt time.Time `json:"created_at"`
+	// Creator is the person who recorded it.
+	Creator Person `json:"creator"`
+	// Details carries the event's membership changes, when it has any.
+	//
+	// Presence is the pointer, matching Event: the versions partial renders
+	// details through the shared recordings/events/_event partial, which emits
+	// "details": {} for an event with no membership changes. Mapping that
+	// present-empty object to nil would lose the distinction between "no changes
+	// recorded" and "this event carries no details at all".
+	Details *EventDetails `json:"details,omitempty"`
+	// BoostsCount is the number of boosts (nil when the event isn't boostable).
+	BoostsCount *int32 `json:"boosts_count,omitempty"`
+	// BoostsURL links the event's boosts (nil when the event isn't boostable).
+	BoostsURL *string `json:"boosts_url,omitempty"`
+	// Upload is the file this version recorded. Nil when the recordable no
+	// longer resolves — a deleted file leaves its version event behind.
+	Upload *UploadVersionFile `json:"upload,omitempty"`
+}
+
+// UploadVersionFile is the file a version event recorded. It is a reduced
+// projection, not an Upload: the versions endpoint renders its own partial and
+// emits only these fields.
+type UploadVersionFile struct {
+	// Filename is the name of this version's file.
+	Filename string `json:"filename"`
+	// ContentType is the blob's MIME type (nil when the upload has no blob).
+	ContentType *string `json:"content_type,omitempty"`
+	// ByteSize is the blob's size (nil when the upload has no blob).
+	ByteSize *int64 `json:"byte_size,omitempty"`
+	// DownloadURL fetches THIS version's bytes. The upload's own download URL
+	// always serves the latest, which is the point of the feature.
+	DownloadURL string `json:"download_url"`
+	// AppDownloadURL is the same file on the storage host.
+	AppDownloadURL string `json:"app_download_url"`
+	// Current is true for the newest version event, and for exactly one element
+	// of any non-empty response. It is computed positionally by the renderer
+	// (event == @events.first over a reverse-chronological list), so it is a
+	// property of ordering rather than of what the upload points at, and is
+	// never zero or plural.
+	//
+	// It does NOT mean "the file the upload's own download URL serves". A
+	// metadata-only update swaps in a recordable carrying the same blob and
+	// emits no event, so afterwards no event references the upload's current
+	// recordable — and exactly one element is still Current.
+	Current bool `json:"current"`
+}
+
+func uploadVersionFromGenerated(g generated.UploadVersion) UploadVersion {
+	v := UploadVersion{
+		ID:          g.Id,
+		RecordingID: g.RecordingId,
+		Action:      g.Action,
+		CreatedAt:   g.CreatedAt,
+		Creator:     personFromGenerated(g.Creator),
+		BoostsCount: g.BoostsCount,
+		BoostsURL:   g.BoostsUrl,
+	}
+	if g.Details != nil {
+		v.Details = &EventDetails{
+			AddedPersonIDs:       g.Details.AddedPersonIds,
+			RemovedPersonIDs:     g.Details.RemovedPersonIds,
+			NotifiedRecipientIDs: g.Details.NotifiedRecipientIds,
+		}
+	}
+	if g.Upload != nil {
+		v.Upload = &UploadVersionFile{
+			Filename:       g.Upload.Filename,
+			ContentType:    g.Upload.ContentType,
+			ByteSize:       g.Upload.ByteSize,
+			DownloadURL:    g.Upload.DownloadUrl,
+			AppDownloadURL: g.Upload.AppDownloadUrl,
+			Current:        g.Upload.Current,
+		}
+	}
+	return v
+}
+
+// UploadVersionListResult contains the results from listing upload versions.
+type UploadVersionListResult struct {
+	// Versions is the list of upload versions returned.
+	Versions []UploadVersion
+	// Meta contains pagination metadata (total count, etc.).
+	Meta ListMeta
+}
+
+// ListVersions returns all versions of an upload.
+//
+// Pagination options:
+//   - Limit: maximum number of versions to return (0 = all)
+//   - Page: the page number is ignored (the upload-versions endpoint is not
+//     paginated server-side), but any positive value still disables
+//     auto-pagination, returning the single response as-is without applying Limit
+//
+// The returned UploadVersionListResult includes pagination metadata (TotalCount from
+// X-Total-Count header) when available.
+func (s *UploadsService) ListVersions(ctx context.Context, uploadID int64, opts *UploadVersionListOptions) (result *UploadVersionListResult, err error) {
+	op := OperationInfo{
+		Service: "Uploads", Operation: "ListVersions",
+		ResourceType: "upload", IsMutation: false,
+		ResourceID: uploadID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	// Call generated client for first page (spec-conformant - no manual path construction)
+	resp, err := s.client.parent.gen.ListUploadVersionsWithResponse(ctx, s.client.accountID, uploadID)
+	if err != nil {
+		return nil, err
+	}
+	if err = checkResponse(resp.HTTPResponse, resp.Body); err != nil {
+		return nil, err
+	}
+
+	// Capture total count from X-Total-Count header (first page only)
+	totalCount := parseTotalCount(resp.HTTPResponse)
+
+	// Parse first page
+	var versions []UploadVersion
+	if resp.JSON200 != nil {
+		for _, gv := range *resp.JSON200 {
+			versions = append(versions, uploadVersionFromGenerated(gv))
+		}
+	}
+
+	// Handle single page fetch (--page flag)
+	if opts != nil && opts.Page > 0 {
+		keep, truncated := pageCap(len(versions), opts.Limit, resp.HTTPResponse)
+		return &UploadVersionListResult{Versions: versions[:keep], Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+	}
+
+	// Determine limit: 0 = all (default for versions)
+	limit := 0
+	if opts != nil {
+		limit = opts.Limit
+	}
+
+	// Check if we already have enough items
+	if limit > 0 && len(versions) >= limit {
+		return &UploadVersionListResult{Versions: versions[:limit], Meta: ListMeta{TotalCount: totalCount, Truncated: isFirstPageTruncated(resp.HTTPResponse, len(versions), limit)}}, nil
+	}
+
+	// Follow pagination via Link headers (uses absolute URLs from API, no path construction)
+	rawMore, truncated, err := s.client.parent.followPagination(ctx, resp.HTTPResponse, len(versions), limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse additional pages
+	for _, raw := range rawMore {
+		var gv generated.UploadVersion
+		if err := json.Unmarshal(raw, &gv); err != nil {
+			return nil, fmt.Errorf("failed to parse upload version: %w", err)
+		}
+		versions = append(versions, uploadVersionFromGenerated(gv))
+	}
+
+	return &UploadVersionListResult{Versions: versions, Meta: ListMeta{TotalCount: totalCount, Truncated: truncated}}, nil
+}
+
+// DownloadResult contains the result from downloading an upload.
+type DownloadResult struct {
+	// Body is the file content. Caller must close this.
+	Body io.ReadCloser
+	// ContentType is the MIME type of the file.
+	ContentType string
+	// ContentLength is the size of the file in bytes (-1 if unknown).
+	ContentLength int64
+	// Filename is the name of the file.
+	Filename string
+}
+
+// Download fetches the file content from an upload's download URL.
+// The caller is responsible for closing the returned Body.
+//
+// This method first fetches the upload metadata to retrieve the download URL,
+// then fetches the file content. The API returns download_url as an
+// API-host URL that requires Bearer auth and 302-redirects to a signed
+// S3 URL, so the first hop is authenticated and the second hop fetches
+// the signed URL without auth.
+func (s *UploadsService) Download(ctx context.Context, uploadID int64) (result *DownloadResult, err error) {
+	op := OperationInfo{
+		Service: "Uploads", Operation: "Download",
+		ResourceType: "upload", IsMutation: false,
+		ResourceID: uploadID,
+	}
+	if gater, ok := s.client.parent.hooks.(GatingHooks); ok {
+		if ctx, err = gater.OnOperationGate(ctx, op); err != nil {
+			return
+		}
+	}
+	start := time.Now()
+	ctx = s.client.parent.hooks.OnOperationStart(ctx, op)
+	defer func() { s.client.parent.hooks.OnOperationEnd(ctx, op, err, time.Since(start)) }()
+
+	upload, err := s.Get(ctx, uploadID)
+	if err != nil {
+		return nil, err
+	}
+
+	if upload.DownloadURL == "" {
+		err = ErrUsage("upload has no download URL")
+		return nil, err
+	}
+
+	result, err = s.client.parent.fetchAPIDownload(ctx, upload.DownloadURL)
+	if err != nil {
+		return nil, err
+	}
+	// Prefer the filename from upload metadata over URL-derived filename.
+	if upload.Filename != "" {
+		result.Filename = upload.Filename
+	}
+	return result, nil
+}
+
+// vaultFromGenerated converts a generated Vault to our clean Vault type.
+func vaultFromGenerated(gv generated.Vault) Vault {
+	v := Vault{
+		Status:           gv.Status,
+		VisibleToClients: gv.VisibleToClients,
+		Title:            gv.Title,
+		InheritsStatus:   gv.InheritsStatus,
+		Type:             gv.Type,
+		URL:              gv.Url,
+		AppURL:           gv.AppUrl,
+		BookmarkURL:      deref(gv.BookmarkUrl),
+		Position:         int(deref(gv.Position)),
+		DocumentsCount:   int(deref(gv.DocumentsCount)),
+		DocumentsURL:     deref(gv.DocumentsUrl),
+		UploadsCount:     int(deref(gv.UploadsCount)),
+		UploadsURL:       deref(gv.UploadsUrl),
+		VaultsCount:      int(deref(gv.VaultsCount)),
+		VaultsURL:        deref(gv.VaultsUrl),
+		CreatedAt:        gv.CreatedAt,
+		UpdatedAt:        gv.UpdatedAt,
+	}
+
+	if gv.Id != 0 {
+		v.ID = gv.Id
+	}
+
+	if gv.Parent != nil {
+		v.Parent = &Parent{
+			ID:     gv.Parent.Id,
+			Title:  gv.Parent.Title,
+			Type:   gv.Parent.Type,
+			URL:    gv.Parent.Url,
+			AppURL: gv.Parent.AppUrl,
+		}
+	}
+
+	if gv.Bucket.Id != 0 || gv.Bucket.Name != "" {
+		v.Bucket = &Bucket{
+			ID:   gv.Bucket.Id,
+			Name: gv.Bucket.Name,
+			Type: gv.Bucket.Type,
+		}
+	}
+
+	if gv.Creator.Id != 0 || gv.Creator.Name != "" {
+		creator := personFromGenerated(gv.Creator)
+		v.Creator = &creator
+	}
+
+	return v
+}
+
+// documentFromGenerated converts a generated Document to our clean Document type.
+func documentFromGenerated(gd generated.Document) Document {
+	d := Document{
+		Status:           gd.Status,
+		VisibleToClients: gd.VisibleToClients,
+		Title:            gd.Title,
+		InheritsStatus:   gd.InheritsStatus,
+		Type:             gd.Type,
+		URL:              gd.Url,
+		AppURL:           gd.AppUrl,
+		BookmarkURL:      deref(gd.BookmarkUrl),
+		SubscriptionURL:  deref(gd.SubscriptionUrl),
+		CommentsCount:    int(deref(gd.CommentsCount)),
+		BoostsCount:      int(deref(gd.BoostsCount)),
+		BoostsURL:        deref(gd.BoostsUrl),
+		CommentsURL:      deref(gd.CommentsUrl),
+		Position:         int(deref(gd.Position)),
+		Content:          deref(gd.Content),
+		CreatedAt:        gd.CreatedAt,
+		UpdatedAt:        gd.UpdatedAt,
+	}
+
+	if gd.Id != 0 {
+		d.ID = gd.Id
+	}
+
+	if gd.Parent.Id != 0 || gd.Parent.Title != "" {
+		d.Parent = &Parent{
+			ID:     gd.Parent.Id,
+			Title:  gd.Parent.Title,
+			Type:   gd.Parent.Type,
+			URL:    gd.Parent.Url,
+			AppURL: gd.Parent.AppUrl,
+		}
+	}
+
+	if gd.Bucket.Id != 0 || gd.Bucket.Name != "" {
+		d.Bucket = &Bucket{
+			ID:   gd.Bucket.Id,
+			Name: gd.Bucket.Name,
+			Type: gd.Bucket.Type,
+		}
+	}
+
+	if gd.Creator.Id != 0 || gd.Creator.Name != "" {
+		creator := personFromGenerated(gd.Creator)
+		d.Creator = &creator
+	}
+
+	d.ContentAttachments = richTextAttachmentsFromGenerated(gd.ContentAttachments)
+
+	return d
+}
+
+// uploadFromGenerated converts a generated Upload to our clean Upload type.
+func uploadFromGenerated(gu generated.Upload) Upload {
+	u := Upload{
+		Status:           gu.Status,
+		VisibleToClients: gu.VisibleToClients,
+		Title:            gu.Title,
+		InheritsStatus:   gu.InheritsStatus,
+		Type:             gu.Type,
+		URL:              gu.Url,
+		AppURL:           gu.AppUrl,
+		BookmarkURL:      deref(gu.BookmarkUrl),
+		SubscriptionURL:  deref(gu.SubscriptionUrl),
+		CommentsCount:    int(deref(gu.CommentsCount)),
+		BoostsCount:      int(deref(gu.BoostsCount)),
+		BoostsURL:        deref(gu.BoostsUrl),
+		CommentsURL:      deref(gu.CommentsUrl),
+		Position:         int(deref(gu.Position)),
+		Description:      deref(gu.Description),
+		ContentType:      deref(gu.ContentType),
+		ByteSize:         deref(gu.ByteSize),
+		Width:            int(deref(gu.Width)),
+		Height:           int(deref(gu.Height)),
+		DownloadURL:      deref(gu.DownloadUrl),
+		Filename:         deref(gu.Filename),
+		CreatedAt:        gu.CreatedAt,
+		UpdatedAt:        gu.UpdatedAt,
+	}
+
+	if gu.Id != 0 {
+		u.ID = gu.Id
+	}
+
+	if gu.Parent.Id != 0 || gu.Parent.Title != "" {
+		u.Parent = &Parent{
+			ID:     gu.Parent.Id,
+			Title:  gu.Parent.Title,
+			Type:   gu.Parent.Type,
+			URL:    gu.Parent.Url,
+			AppURL: gu.Parent.AppUrl,
+		}
+	}
+
+	if gu.Bucket.Id != 0 || gu.Bucket.Name != "" {
+		u.Bucket = &Bucket{
+			ID:   gu.Bucket.Id,
+			Name: gu.Bucket.Name,
+			Type: gu.Bucket.Type,
+		}
+	}
+
+	if gu.Creator.Id != 0 || gu.Creator.Name != "" {
+		creator := personFromGenerated(gu.Creator)
+		u.Creator = &creator
+	}
+
+	u.DescriptionAttachments = richTextAttachmentsFromGenerated(gu.DescriptionAttachments)
+
+	return u
+}

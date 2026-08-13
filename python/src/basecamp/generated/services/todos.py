@@ -1,0 +1,296 @@
+# @generated from OpenAPI spec — do not edit manually
+
+from __future__ import annotations
+
+from typing import Any
+
+from basecamp.generated.services._base import BaseService
+from basecamp.generated.services._async_base import AsyncBaseService
+from basecamp._pagination import ListResult
+from basecamp.hooks import OperationInfo
+
+
+class TodosService(BaseService):
+    def create_todoset_todo(
+        self,
+        *,
+        bucket_id: int,
+        todoset_id: int,
+        content: str,
+        description: str | None = None,
+        assignee_ids: list[int] | None = None,
+        completion_subscriber_ids: list[int] | None = None,
+        notify: bool | None = None,
+        due_on: str | None = None,
+        starts_on: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            OperationInfo(
+                service="todos",
+                operation="create_todoset_todo",
+                is_mutation=True,
+                project_id=bucket_id,
+                resource_id=todoset_id,
+            ),
+            "POST",
+            f"/buckets/{bucket_id}/todosets/{todoset_id}/todos.json",
+            json_body=self._compact(
+                content=content,
+                description=description,
+                assignee_ids=assignee_ids,
+                completion_subscriber_ids=completion_subscriber_ids,
+                notify=notify,
+                due_on=due_on,
+                starts_on=starts_on,
+            ),
+            operation="CreateTodosetTodo",
+        )
+
+    def list(
+        self,
+        *,
+        todolist_id: int,
+        status: str | None = None,
+        completed: bool | None = None,
+        page: int | None = None,
+        max_items: int | None = None,
+    ) -> ListResult:
+        return self._request_paginated(
+            OperationInfo(service="todos", operation="list", is_mutation=False, resource_id=todolist_id),
+            f"/todolists/{todolist_id}/todos.json",
+            params=self._compact(status=status, completed=completed, page=page),
+            max_items=max_items,
+            operation="ListTodos",
+        )
+
+    def create(
+        self,
+        *,
+        todolist_id: int,
+        content: str,
+        description: str | None = None,
+        assignee_ids: list[int] | None = None,
+        completion_subscriber_ids: list[int] | None = None,
+        notify: bool | None = None,
+        due_on: str | None = None,
+        starts_on: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            OperationInfo(service="todos", operation="create", is_mutation=True, resource_id=todolist_id),
+            "POST",
+            f"/todolists/{todolist_id}/todos.json",
+            json_body=self._compact(
+                content=content,
+                description=description,
+                assignee_ids=assignee_ids,
+                completion_subscriber_ids=completion_subscriber_ids,
+                notify=notify,
+                due_on=due_on,
+                starts_on=starts_on,
+            ),
+            operation="CreateTodo",
+        )
+
+    def get(self, *, todo_id: int) -> dict[str, Any]:
+        return self._request(
+            OperationInfo(service="todos", operation="get", is_mutation=False, resource_id=todo_id),
+            "GET",
+            f"/todos/{todo_id}",
+            operation="GetTodo",
+        )
+
+    def replace(
+        self,
+        *,
+        todo_id: int,
+        content: str,
+        description: str | None = None,
+        assignee_ids: list[int] | None = None,
+        completion_subscriber_ids: list[int] | None = None,
+        notify: bool | None = None,
+        due_on: str | None = None,
+        starts_on: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            OperationInfo(service="todos", operation="replace", is_mutation=True, resource_id=todo_id),
+            "PUT",
+            f"/todos/{todo_id}",
+            json_body=self._compact(
+                content=content,
+                description=description,
+                assignee_ids=assignee_ids,
+                completion_subscriber_ids=completion_subscriber_ids,
+                notify=notify,
+                due_on=due_on,
+                starts_on=starts_on,
+            ),
+            operation="ReplaceTodo",
+        )
+
+    def complete(self, *, todo_id: int) -> None:
+        self._request_void(
+            OperationInfo(service="todos", operation="complete", is_mutation=True, resource_id=todo_id),
+            "POST",
+            f"/todos/{todo_id}/completion.json",
+            operation="CompleteTodo",
+        )
+
+    def uncomplete(self, *, todo_id: int) -> None:
+        self._request_void(
+            OperationInfo(service="todos", operation="uncomplete", is_mutation=True, resource_id=todo_id),
+            "DELETE",
+            f"/todos/{todo_id}/completion.json",
+            operation="UncompleteTodo",
+        )
+
+    def reposition(self, *, todo_id: int, position: int, parent_id: int | None = None) -> None:
+        self._request_void(
+            OperationInfo(service="todos", operation="reposition", is_mutation=True, resource_id=todo_id),
+            "PUT",
+            f"/todos/{todo_id}/position.json",
+            json_body=self._compact(position=position, parent_id=parent_id),
+            operation="RepositionTodo",
+        )
+
+
+class AsyncTodosService(AsyncBaseService):
+    async def create_todoset_todo(
+        self,
+        *,
+        bucket_id: int,
+        todoset_id: int,
+        content: str,
+        description: str | None = None,
+        assignee_ids: list[int] | None = None,
+        completion_subscriber_ids: list[int] | None = None,
+        notify: bool | None = None,
+        due_on: str | None = None,
+        starts_on: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            OperationInfo(
+                service="todos",
+                operation="create_todoset_todo",
+                is_mutation=True,
+                project_id=bucket_id,
+                resource_id=todoset_id,
+            ),
+            "POST",
+            f"/buckets/{bucket_id}/todosets/{todoset_id}/todos.json",
+            json_body=self._compact(
+                content=content,
+                description=description,
+                assignee_ids=assignee_ids,
+                completion_subscriber_ids=completion_subscriber_ids,
+                notify=notify,
+                due_on=due_on,
+                starts_on=starts_on,
+            ),
+            operation="CreateTodosetTodo",
+        )
+
+    async def list(
+        self,
+        *,
+        todolist_id: int,
+        status: str | None = None,
+        completed: bool | None = None,
+        page: int | None = None,
+        max_items: int | None = None,
+    ) -> ListResult:
+        return await self._request_paginated(
+            OperationInfo(service="todos", operation="list", is_mutation=False, resource_id=todolist_id),
+            f"/todolists/{todolist_id}/todos.json",
+            params=self._compact(status=status, completed=completed, page=page),
+            max_items=max_items,
+            operation="ListTodos",
+        )
+
+    async def create(
+        self,
+        *,
+        todolist_id: int,
+        content: str,
+        description: str | None = None,
+        assignee_ids: list[int] | None = None,
+        completion_subscriber_ids: list[int] | None = None,
+        notify: bool | None = None,
+        due_on: str | None = None,
+        starts_on: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            OperationInfo(service="todos", operation="create", is_mutation=True, resource_id=todolist_id),
+            "POST",
+            f"/todolists/{todolist_id}/todos.json",
+            json_body=self._compact(
+                content=content,
+                description=description,
+                assignee_ids=assignee_ids,
+                completion_subscriber_ids=completion_subscriber_ids,
+                notify=notify,
+                due_on=due_on,
+                starts_on=starts_on,
+            ),
+            operation="CreateTodo",
+        )
+
+    async def get(self, *, todo_id: int) -> dict[str, Any]:
+        return await self._request(
+            OperationInfo(service="todos", operation="get", is_mutation=False, resource_id=todo_id),
+            "GET",
+            f"/todos/{todo_id}",
+            operation="GetTodo",
+        )
+
+    async def replace(
+        self,
+        *,
+        todo_id: int,
+        content: str,
+        description: str | None = None,
+        assignee_ids: list[int] | None = None,
+        completion_subscriber_ids: list[int] | None = None,
+        notify: bool | None = None,
+        due_on: str | None = None,
+        starts_on: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            OperationInfo(service="todos", operation="replace", is_mutation=True, resource_id=todo_id),
+            "PUT",
+            f"/todos/{todo_id}",
+            json_body=self._compact(
+                content=content,
+                description=description,
+                assignee_ids=assignee_ids,
+                completion_subscriber_ids=completion_subscriber_ids,
+                notify=notify,
+                due_on=due_on,
+                starts_on=starts_on,
+            ),
+            operation="ReplaceTodo",
+        )
+
+    async def complete(self, *, todo_id: int) -> None:
+        await self._request_void(
+            OperationInfo(service="todos", operation="complete", is_mutation=True, resource_id=todo_id),
+            "POST",
+            f"/todos/{todo_id}/completion.json",
+            operation="CompleteTodo",
+        )
+
+    async def uncomplete(self, *, todo_id: int) -> None:
+        await self._request_void(
+            OperationInfo(service="todos", operation="uncomplete", is_mutation=True, resource_id=todo_id),
+            "DELETE",
+            f"/todos/{todo_id}/completion.json",
+            operation="UncompleteTodo",
+        )
+
+    async def reposition(self, *, todo_id: int, position: int, parent_id: int | None = None) -> None:
+        await self._request_void(
+            OperationInfo(service="todos", operation="reposition", is_mutation=True, resource_id=todo_id),
+            "PUT",
+            f"/todos/{todo_id}/position.json",
+            json_body=self._compact(position=position, parent_id=parent_id),
+            operation="RepositionTodo",
+        )

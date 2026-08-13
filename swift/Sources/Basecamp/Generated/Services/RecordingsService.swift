@@ -1,0 +1,88 @@
+// @generated from OpenAPI spec — do not edit directly
+import Foundation
+
+public struct ListRecordingOptions: Sendable {
+    public var bucket: String?
+    /// active|archived|trashed
+    public var status: String?
+    /// created_at|updated_at
+    public var sort: String?
+    /// asc|desc
+    public var direction: String?
+    /// Page number for paginating through results. Defaults to 1. A positive value selects exactly that page, not a starting offset; see SPEC section 8.
+    public var page: Int?
+    public var maxItems: Int?
+
+    public init(
+        bucket: String? = nil,
+        status: String? = nil,
+        sort: String? = nil,
+        direction: String? = nil,
+        page: Int? = nil,
+        maxItems: Int? = nil
+    ) {
+        self.bucket = bucket
+        self.status = status
+        self.sort = sort
+        self.direction = direction
+        self.page = page
+        self.maxItems = maxItems
+    }
+}
+
+
+public final class RecordingsService: BaseService, @unchecked Sendable {
+    public func archive(recordingId: Int) async throws {
+        try await requestVoid(
+            OperationInfo(service: "Recordings", operation: "ArchiveRecording", resourceType: "recording", isMutation: true, resourceId: recordingId),
+            method: "PUT",
+            path: "/recordings/\(recordingId)/status/archived.json",
+            retryConfig: Metadata.retryConfig(for: "ArchiveRecording")
+        )
+    }
+
+    public func list(type: String, options: ListRecordingOptions? = nil) async throws -> ListResult<Recording> {
+        var queryItems: [URLQueryItem] = []
+        queryItems.append(URLQueryItem(name: "type", value: type))
+        if let bucket = options?.bucket {
+            queryItems.append(URLQueryItem(name: "bucket", value: bucket))
+        }
+        if let status = options?.status {
+            queryItems.append(URLQueryItem(name: "status", value: status))
+        }
+        if let sort = options?.sort {
+            queryItems.append(URLQueryItem(name: "sort", value: sort))
+        }
+        if let direction = options?.direction {
+            queryItems.append(URLQueryItem(name: "direction", value: direction))
+        }
+        if let page = options?.page {
+            queryItems.append(URLQueryItem(name: "page", value: String(page)))
+        }
+        return try await requestPaginated(
+            OperationInfo(service: "Recordings", operation: "ListRecordings", resourceType: "recording", isMutation: false),
+            path: "/projects/recordings.json",
+            queryItems: queryItems.isEmpty ? nil : queryItems,
+            paginationOpts: options.flatMap { PaginationOptions(maxItems: $0.maxItems, page: $0.page) },
+            retryConfig: Metadata.retryConfig(for: "ListRecordings")
+        )
+    }
+
+    public func trash(recordingId: Int) async throws {
+        try await requestVoid(
+            OperationInfo(service: "Recordings", operation: "TrashRecording", resourceType: "recording", isMutation: true, resourceId: recordingId),
+            method: "PUT",
+            path: "/recordings/\(recordingId)/status/trashed.json",
+            retryConfig: Metadata.retryConfig(for: "TrashRecording")
+        )
+    }
+
+    public func unarchive(recordingId: Int) async throws {
+        try await requestVoid(
+            OperationInfo(service: "Recordings", operation: "UnarchiveRecording", resourceType: "recording", isMutation: true, resourceId: recordingId),
+            method: "PUT",
+            path: "/recordings/\(recordingId)/status/active.json",
+            retryConfig: Metadata.retryConfig(for: "UnarchiveRecording")
+        )
+    }
+}

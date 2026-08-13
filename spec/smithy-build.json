@@ -1,0 +1,84 @@
+{
+  "version": "1.0",
+  "sources": ["basecamp.smithy", "basecamp-traits.smithy", "overlays/"],
+  "maven": {
+    "dependencies": [
+      "software.amazon.smithy:smithy-openapi:1.66.0",
+      "software.amazon.smithy:smithy-openapi-traits:1.66.0",
+      "software.amazon.smithy:smithy-aws-traits:1.66.0",
+      "com.basecamp:smithy-bare-arrays:1.0.0"
+    ],
+    "repositories": [
+      { "url": "https://repo1.maven.org/maven2/" },
+      { "url": "file://${user.home}/.m2/repository" }
+    ]
+  },
+  "projections": {
+    "openapi": {
+      "plugins": {
+        "openapi": {
+          "service": "basecamp#Basecamp",
+          "protocol": "aws.protocols#restJson1",
+          "jsonContentType": "application/json",
+          "ignoreUnsupportedTraits": true,
+          "tags": true,
+          "version": "3.1.0",
+          "useIntegerType": true,
+          "jsonAdd": {
+            "/info/license": {
+              "name": "MIT",
+              "url": "https://github.com/basecamp/basecamp-sdk/blob/main/LICENSE"
+            },
+            "/info/contact": {
+              "name": "Basecamp",
+              "url": "https://github.com/basecamp/basecamp-sdk"
+            },
+            "/components/schemas/Todolist/properties/color/type": ["string", "null"],
+            "/components/schemas/Todolist/properties/color/x-go-type": "string",
+            "/components/schemas/Todolist/required/-": "color",
+            "/paths/~1{accountId}~1todolists~1{id}/get/responses/200/content/application~1json/examples/GetTodolistOrGroup_example1/value/color": "blue",
+            "/paths/~1{accountId}~1todolists~1{id}/get/responses/200/content/application~1json/examples/GetTodolistOrGroup_example2/value/color": null,
+            "/components/schemas/SearchType/properties/key/type": ["string", "null"],
+            "/components/schemas/SearchType/properties/key/x-go-type": "string",
+            "/components/schemas/SearchResult/properties/content/type": ["string", "null"],
+            "/components/schemas/SearchResult/properties/content/x-go-type": "string",
+            "/components/schemas/SearchResult/properties/description/type": ["string", "null"],
+            "/components/schemas/SearchResult/properties/description/x-go-type": "string",
+            "/components/schemas/MyNote/properties/id/type": ["integer", "null"],
+            "/components/schemas/MyNote/properties/id/x-go-type": "int64",
+            "/components/schemas/MyNote/properties/created_at/type": ["string", "null"],
+            "/components/schemas/MyNote/properties/created_at/x-go-type": "time.Time",
+            "/components/schemas/MyNote/properties/updated_at/type": ["string", "null"],
+            "/components/schemas/MyNote/properties/updated_at/x-go-type": "time.Time",
+            "/components/schemas/Draft/properties/parent": {"anyOf": [{"$ref": "#/components/schemas/DraftParent"}, {"type": "null"}], "x-go-type": "DraftParent"},
+            "/components/schemas/Draft/properties/scheduled_posting_at/type": ["string", "null"],
+            "/components/schemas/Draft/properties/scheduled_posting_at/x-go-type": "time.Time",
+            "/components/schemas/Wormhole/properties/destination_url/type": ["string", "null"],
+            "/components/schemas/Wormhole/properties/destination_url/x-go-type": "string",
+            "/components/schemas/Wormhole/properties/color/type": ["string", "null"],
+            "/components/schemas/Wormhole/properties/color/x-go-type": "string",
+            "/components/schemas/Folder/properties/gauges_url/type": ["string", "null"],
+            "/components/schemas/Folder/properties/gauges_url/x-go-type": "string",
+            "/components/schemas/Folder/properties/color/type": ["string", "null"],
+            "/components/schemas/Folder/properties/color/x-go-type": "string",
+            "/components/schemas/Folder/properties/image_url/type": ["string", "null"],
+            "/components/schemas/Folder/properties/image_url/x-go-type": "string",
+            "/components/schemas/FolderWithProjects/properties/gauges_url/type": ["string", "null"],
+            "/components/schemas/FolderWithProjects/properties/gauges_url/x-go-type": "string",
+            "/components/schemas/FolderWithProjects/properties/color/type": ["string", "null"],
+            "/components/schemas/FolderWithProjects/properties/color/x-go-type": "string",
+            "/components/schemas/FolderWithProjects/properties/image_url/type": ["string", "null"],
+            "/components/schemas/FolderWithProjects/properties/image_url/x-go-type": "string"
+          }
+        }
+      }
+    },
+    "ast": {
+      "plugins": {
+        "model": {
+          "service": "basecamp#Basecamp"
+        }
+      }
+    }
+  }
+}

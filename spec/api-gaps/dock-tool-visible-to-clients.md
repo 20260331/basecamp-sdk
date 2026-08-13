@@ -1,0 +1,87 @@
+---
+gap: dock-tool-visible-to-clients
+status: absorbed-in-sdk
+detected: 2026-07-23
+sdk_demand: low
+bc3_pr: 12386
+smithy_refs:
+  - "CreateToolInput.visible_to_clients member (spec/basecamp.smithy:7227)"
+bc3_refs:
+  introduced_in: master
+  routes:
+    - "POST /:account_id/buckets/:bucket_id/dock/tools.json (existing CreateTool — visible_to_clients additive, honored only by self-visibility tool types)"
+  controllers:
+    - app/controllers/docks/tools_controller.rb
+  related_existing_api:
+    - CreateTool
+---
+
+# Create-time `visible_to_clients` on dock tool creation
+
+## What's missing
+
+The dock-tool create endpoint (`POST /buckets/:bucket_id/dock/tools.json`,
+modeled as `CreateTool`) gained an optional top-level `visible_to_clients`
+boolean at create time in BC3 **#12386** ("Honor create-time visible_to_clients
+on dock tool creates", merged `bee714c74`, 2026-07-23). This is the dock-tool
+sibling of the six content creates absorbed in
+[[visible-to-clients-on-creates]]; it is split into its own entry because the
+honoring rule is narrower. It is now `absorbed-in-sdk`: `CreateToolInput` models
+the optional `visible_to_clients` field and `ToolsService.Create` passes it
+through (see the smithy_refs below).
+
+The contract is narrower than the content creates:
+
+- The flag **only takes effect for tool types that manage their own
+  visibility** — `Chat::Transcript` and `Kanban::Board`, which otherwise start
+  hidden from clients. Pass `true` to create one already client-visible.
+- **All other tool types ignore it** and inherit the project's default.
+- It applies **only when a new tool is created**; re-enabling an existing tool
+  keeps its current visibility.
+- It is a **top-level** boolean, a sibling of `tool_type`/`title` (documented in
+  `doc/api/sections/tools.md`). `Docks::ToolsController` includes
+  `Recording::VisibleToClientsParam` and gates it on
+  `tool.changes_client_visibility?`.
+
+The SDK's `CreateTool` request type now exposes `visible_to_clients` (added as a
+tri-state optional on `CreateToolInput`), so consumers can set a Chat/Kanban
+tool's client visibility at create time.
+
+This absorption is kept separate from the six-content-create absorption on
+purpose: `CreateTool` is a distinct dock-tool operation with a narrower
+(two-tool-type) honoring rule, so folding it in would both widen scope and blur
+the semantics.
+
+## Why it matters
+
+Without it, creating a client-visible Chat transcript or Kanban board is a
+two-step create-then-toggle, with a window where the tool is briefly hidden (or
+visible) under the wrong setting. `sdk_demand` is low: it affects only two tool
+types, and the create-then-toggle path (via the existing client-visibility
+endpoints) works today.
+
+## Suggested API shape
+
+Additive optional `visible_to_clients: Boolean` (tri-state, same pointer/nullable
+modeling as the content creates) on the existing `CreateToolInput`. Response
+shape unchanged. When modeled, document the two-tool-type honoring rule so
+callers don't expect it to apply to, e.g., a `Vault` or `Message::Board` tool.
+
+## Implementation notes for BC3
+
+Done: bc3#12386 (`bee714c74`) added the `Recording::VisibleToClientsParam`
+concern to `Docks::ToolsController`, gated it on
+`tool.changes_client_visibility?` (so only self-visibility tool types honor it),
+and documented the parameter in `doc/api/sections/tools.md` (syncs to bc3-api).
+Nothing further is required of BC3.
+
+## SDK absorption plan when this lands
+
+Absorbed (basecamp-sdk PR-1 of the post-#401 follow-up program). Added optional
+`visible_to_clients: Boolean` to the Smithy `CreateToolInput`, regenerated, added
+the Go hand-wrapper field (`CreateToolOptions.VisibleToClients *bool`) with a
+tri-state pass-through in `ToolsService.Create`, and added a Go tri-state
+transport test plus one body-encoding test in each non-Go SDK
+(TS/Ruby/Python/Kotlin/Swift) asserting an explicit `false` reaches the wire.
+The narrower two-tool-type honoring rule is documented on the Smithy member and
+the Go option field.

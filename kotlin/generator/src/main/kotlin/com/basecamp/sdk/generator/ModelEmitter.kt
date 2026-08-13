@@ -1,0 +1,293 @@
+package com.basecamp.sdk.generator
+
+import kotlinx.serialization.json.*
+
+/**
+ * Generates @Serializable data classes from OpenAPI entity schemas.
+ */
+class ModelEmitter(private val api: OpenApiParser) {
+
+    /**
+     * Generate a Kotlin model file for a given entity schema.
+     * Returns null if the schema can't be generated (e.g., not an object type).
+     */
+    fun generateModel(schemaName: String, typeName: String): String? {
+        val schema = api.getSchema(schemaName) ?: return null
+        val type = schema["type"]?.jsonPrimitive?.content
+
+        // Skip non-object schemas
+        if (type != "object") return null
+
+        val properties = schema["properties"]?.jsonObject ?: return null
+        if (properties.isEmpty()) return null
+
+        val requiredFields = schema["required"]?.jsonArray
+            ?.map { it.jsonPrimitive.content }
+            ?.toSet()
+            ?: emptySet()
+
+        val lines = mutableListOf<String>()
+        lines += "package com.basecamp.sdk.generated.models"
+        lines += ""
+        lines += "import kotlinx.serialization.SerialName"
+        lines += "import kotlinx.serialization.Serializable"
+        lines += "import kotlinx.serialization.json.JsonElement"
+        lines += "import kotlinx.serialization.json.JsonObject"
+
+        // Check if any property needs FlexibleLongSerializer
+        val hasFlexible = properties.any { (_, propSchema) ->
+            propSchema.jsonObject["x-go-type"]?.jsonPrimitive?.content?.contains("FlexibleInt64") == true
+        }
+        if (hasFlexible) {
+            lines += "import com.basecamp.sdk.serialization.FlexibleLongSerializer"
+        }
+        // Check if any property needs FlexibleIntSerializer (float-spelled,
+        // nullable pixel dimensions). "FlexibleInt64" does not contain the
+        // substring "FlexInt", so the two markers never collide.
+        val hasFlexibleInt = properties.any { (_, propSchema) ->
+            isFlexInt(propSchema.jsonObject)
+        }
+        if (hasFlexibleInt) {
+            lines += "import com.basecamp.sdk.serialization.FlexibleIntSerializer"
+        }
+        lines += ""
+        lines += "/**"
+        lines += " * $typeName entity from the Basecamp API."
+        lines += " *"
+        lines += " * @generated from OpenAPI spec — do not edit directly"
+        lines += " */"
+        // A model that references a deprecated component type warns merely by
+        // declaring the field — annotating the property does NOT suppress the
+        // deprecated-TYPE-reference warning — so suppress at the type level.
+        // Conditional on actually referencing a deprecated component, not keyed
+        // on any specific model, to hold the zero-generator-warning invariant.
+        // See #406.
+        val referencesDeprecatedType = properties.any { (_, ps) -> referencesDeprecatedComponent(ps.jsonObject) }
+        if (referencesDeprecatedType) {
+            lines += "@Suppress(\"DEPRECATION\")"
+        }
+        // A wholly deprecated type gets a class-level @Deprecated (compiler
+        // warning at use sites).
+        if (schema["deprecated"]?.jsonPrimitive?.booleanOrNull == true) {
+            lines += "@Deprecated(${kotlinStringLiteral(schema["x-deprecated-reason"]?.jsonPrimitive?.content ?: "deprecated")})"
+        }
+        lines += "@Serializable"
+        lines += "data class $typeName("
+
+        // Required fields first (no defaults), then optional fields (with defaults)
+        val requiredProps = mutableListOf<Pair<String, JsonObject>>()
+        val optionalProps = mutableListOf<Pair<String, JsonObject>>()
+        for ((propName, propSchema) in properties) {
+            if (propName in requiredFields) {
+                requiredProps += propName to propSchema.jsonObject
+            } else {
+                optionalProps += propName to propSchema.jsonObject
+            }
+        }
+
+        val propLines = mutableListOf<String>()
+        for ((propName, propObj) in requiredProps + optionalProps) {
+            val isRequired = propName in requiredFields
+            val kotlinType = resolvePropertyType(propObj, isRequired)
+            val camelName = propName.snakeToCamelCase()
+            val needsSerialName = camelName != propName
+            val isFlexible = propObj["x-go-type"]?.jsonPrimitive?.content?.contains("FlexibleInt64") == true
+            val isFlexibleInt = isFlexInt(propObj)
+
+            val propLine = buildString {
+                // Compiler-level deprecation on the property (see #406). The
+                // class-level @Suppress above absorbs the deprecated-type-
+                // reference warning; this marks the property for consumers.
+                if (propObj["deprecated"]?.jsonPrimitive?.booleanOrNull == true) {
+                    append("    @Deprecated(${kotlinStringLiteral(propObj["x-deprecated-reason"]?.jsonPrimitive?.content ?: "deprecated")})\n")
+                }
+                if (isFlexible) {
+                    append("    @Serializable(with = FlexibleLongSerializer::class)\n")
+                }
+                if (isFlexibleInt) {
+                    append("    @Serializable(with = FlexibleIntSerializer::class)\n")
+                }
+                if (needsSerialName) {
+                    append("    @SerialName(\"$propName\") ")
+                } else {
+                    append("    ")
+                }
+                append("val $camelName: $kotlinType")
+                if (!isRequired) {
+                    append(" = ${defaultValue(kotlinType)}")
+                }
+            }
+            propLines += propLine
+            // Add system_label field after flexible integer id fields
+            if (isFlexible) {
+                propLines += "    @SerialName(\"system_label\") val systemLabel: String? = null"
+            }
+        }
+
+        lines += propLines.joinToString(",\n")
+        lines += ")"
+
+        return lines.joinToString("\n") + "\n"
+    }
+
+    /**
+     * Resolves a property schema to the appropriate Kotlin type.
+     * Required fields are non-nullable; optional fields are nullable with defaults.
+     */
+    private fun resolvePropertyType(schema: JsonObject, isRequired: Boolean = false): String {
+        val ref = schema["\$ref"]?.jsonPrimitive?.content
+        if (ref != null) {
+            val refName = api.resolveRef(ref)
+            // Use TYPE_ALIASES for mapped names, fall back to schema name for supporting types.
+            // Only use the schema name if it's a generatable object (has properties).
+            val typeName = TYPE_ALIASES[refName] ?: run {
+                val refSchema = api.getSchema(refName)
+                val hasProperties = refSchema?.get("properties")?.jsonObject?.isNotEmpty() == true
+                if (hasProperties) refName else return if (isRequired) "JsonObject" else "JsonObject?"
+            }
+            return if (isRequired) typeName else "$typeName?"
+        }
+
+        // Required-and-nullable object member: `anyOf: [$ref, {type: "null"}]` —
+        // the OpenAPI 3.1 spelling of a present-but-nullable reference (the
+        // object counterpart of the ["string","null"] union above). Resolve to
+        // the referenced model, nullable regardless of requiredness.
+        val anyOf = schema["anyOf"]
+        if (anyOf is JsonArray && anyOf.size == 2) {
+            val members = anyOf.mapNotNull { it as? JsonObject }
+            val refMember = members.firstOrNull { it.containsKey("\$ref") }
+            val nullMember = members.firstOrNull { it["type"]?.jsonPrimitive?.contentOrNull == "null" }
+            if (refMember != null && nullMember != null) {
+                val nullableRef = refMember["\$ref"]?.jsonPrimitive?.content
+                if (nullableRef != null) {
+                    val refName = api.resolveRef(nullableRef)
+                    val typeName = TYPE_ALIASES[refName] ?: refName
+                    return "$typeName?"
+                }
+            }
+        }
+
+        // Flexible integer fields (string-or-number on the wire)
+        val goType = schema["x-go-type"]?.jsonPrimitive?.content
+        if (goType?.contains("FlexibleInt64") == true) {
+            return "Long"  // Uses @Serializable(with = FlexibleLongSerializer::class) annotation
+        }
+        // Float-spelled, nullable pixel dimensions (types.FlexInt). Always
+        // nullable so a served null decodes to null rather than a sentinel 0.
+        // Uses @Serializable(with = FlexibleIntSerializer::class).
+        if (isFlexInt(schema)) {
+            return "Int?"
+        }
+
+        // OpenAPI 3.1 null-union type (e.g. ["string","null"]): the member permits
+        // an explicit JSON null, so it is always nullable regardless of requiredness.
+        // Resolve the non-null member of the union and mark it nullable.
+        val typeNode = schema["type"]
+        if (typeNode is JsonArray) {
+            val nonNullType = typeNode.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                .firstOrNull { it != "null" }
+            return when (nonNullType) {
+                "integer" -> if (schema["format"]?.jsonPrimitive?.content == "int64") "Long?" else "Int?"
+                "boolean" -> "Boolean?"
+                "number" -> "Double?"
+                "string" -> "String?"
+                "array" -> {
+                    val itemType = resolveArrayItemType(schema["items"]?.jsonObject)
+                    "List<$itemType>?"
+                }
+                "object" -> "JsonObject?"
+                else -> "JsonElement?"
+            }
+        }
+
+        return when (schema["type"]?.jsonPrimitive?.content) {
+            // Optional scalars are nullable so an absent field decodes to null
+            // rather than a fabricated 0/false sentinel, per SPEC.md §10 (Optional
+            // Fields). Required scalars stay non-nullable. This matters most for
+            // the untagged supersets (TimelineAttachment, EverythingFile) whose
+            // variants each omit the other's fields.
+            "integer" -> when (schema["format"]?.jsonPrimitive?.content) {
+                "int64" -> if (isRequired) "Long" else "Long?"
+                else -> if (isRequired) "Int" else "Int?"
+            }
+            "boolean" -> if (isRequired) "Boolean" else "Boolean?"
+            "number" -> if (isRequired) "Double" else "Double?"
+            "string" -> if (isRequired) "String" else "String?"
+            "array" -> {
+                val itemType = resolveArrayItemType(schema["items"]?.jsonObject)
+                // Every OPTIONAL array is nullable (`List<X>? = null`) so an
+                // absent array stays distinct from a present-but-empty one,
+                // per SPEC.md's Optional Fields rule (a sentinel — here
+                // `= emptyList()` — is not a substitute for absence). This
+                // aligns Kotlin with the other five SDKs, all of which already
+                // preserve the distinction: Go (nil pointer), Swift/TypeScript
+                // (optional), Python (NotRequired), Ruby (nil). REQUIRED arrays
+                // are always emitted, so they stay a plain non-null `List<X>`.
+                if (!isRequired) "List<$itemType>?" else "List<$itemType>"
+            }
+            "object" -> if (isRequired) "JsonObject" else "JsonObject?"
+            else -> if (isRequired) "JsonElement" else "JsonElement?"
+        }
+    }
+
+    /** True when a property's type resolves to a component schema marked
+     *  `deprecated: true` (directly or as an array element). Declaring a field of
+     *  such a type warns at the declaration site regardless of any @Deprecated on
+     *  the property, so the owning data class needs a type-level @Suppress. */
+    private fun referencesDeprecatedComponent(propObj: JsonObject): Boolean {
+        val refName = componentRefName(propObj) ?: return false
+        val refSchema = api.getSchema(refName) ?: return false
+        return refSchema["deprecated"]?.jsonPrimitive?.booleanOrNull == true
+    }
+
+    /** The referenced component name for a property that is a `$ref` or an array
+     *  of `$ref`, else null. */
+    private fun componentRefName(propObj: JsonObject): String? {
+        propObj["\$ref"]?.jsonPrimitive?.content?.let { return api.resolveRef(it) }
+        propObj["items"]?.jsonObject?.get("\$ref")?.jsonPrimitive?.content?.let { return api.resolveRef(it) }
+        return null
+    }
+
+    private fun resolveArrayItemType(items: JsonObject?): String {
+        if (items == null) return "JsonElement"
+        val ref = items["\$ref"]?.jsonPrimitive?.content
+        if (ref != null) {
+            val refName = api.resolveRef(ref)
+            return TYPE_ALIASES[refName] ?: run {
+                val refSchema = api.getSchema(refName)
+                val hasProperties = refSchema?.get("properties")?.jsonObject?.isNotEmpty() == true
+                if (hasProperties) refName else "JsonObject"
+            }
+        }
+        return when (items["type"]?.jsonPrimitive?.content) {
+            "integer" -> when (items["format"]?.jsonPrimitive?.content) {
+                "int64" -> "Long"
+                else -> "Int"
+            }
+            "boolean" -> "Boolean"
+            "string" -> "String"
+            else -> "JsonElement"
+        }
+    }
+
+    /**
+     * True for a schema tagged `x-go-type: types.FlexInt` — the float-spelled,
+     * nullable pixel dimensions (rich-text attachment / upload width & height).
+     * "FlexibleInt64" (Person id) does not contain the substring "FlexInt", so
+     * the two flexible markers never collide.
+     */
+    private fun isFlexInt(schema: JsonObject): Boolean =
+        schema["x-go-type"]?.jsonPrimitive?.content?.contains("FlexInt") == true
+
+    private fun defaultValue(type: String): String = when {
+        // Nullable types (incl. a nullable List<X>?) default to null, so this
+        // must precede the List branch below.
+        type.endsWith("?") -> "null"
+        type == "Boolean" -> "false"
+        type == "Int" -> "0"
+        type == "Long" -> "0L"
+        type == "Double" -> "0.0"
+        type.startsWith("List<") -> "emptyList()"
+        else -> "null"
+    }
+}
